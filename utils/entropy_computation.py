@@ -38,7 +38,7 @@ def test_predict_entropy(lm, dataloader, tokenizer, device, batch_predict_logits
         batch_logp, batch_avg_logp, batch_tokens = batch_predict_entropy(lm, batch, tokenizer, device, batch_predict_logits)
         tokens_logp.extend(batch_logp)
         sent_avg_logp.extend(batch_avg_logp)
-        tokens.extend(batch_avg_logp)
+        tokens.extend(batch_tokens)
 
     iterator.close()
     sent_length = [len(x) for x in tokens_logp]
@@ -146,7 +146,10 @@ def pivot_results_df(df:pd.DataFrame, post_patterns:list) -> pd.DataFrame:
                                     f'sum_h{pat}', f'xu_h{pat}']
         tmp = df[ main_columns + pat_columns]
         tmp.rename(columns={col:col.replace(pat,'') for col in pat_columns}, inplace=True)
-        tmp['model_pattern'] = pat
+        if 'model' in tmp.columns:
+            tmp['model'] = tmp['model']+pat
+        else:
+            tmp['model'] = pat
         pivot_df.append(tmp)
     pivot_df = pd.concat(pivot_df)
     return pivot_df
