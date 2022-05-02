@@ -111,47 +111,41 @@ def batch_predict_entropy(lm, batch, tokenizer, device, batch_predict_logits): #
     return batch_logp, batch_avg_logp, batch_tokens
 
 
-def results_to_df(df:pd.DataFrame, sent_avg_logp:list, tokens_logp:list, sent_length:list,
-                        out_file_name:str=None, sentence_tokens:list=None, column_post:str='', model_post:str=None):
-    """Adds entropy results to dataframe. In case of multiple entropy results being added to the dataframe two strategies 
-    can be chosen: extend the dataframe with specific columns (`column_post` argument) or extend the length of the 
-    dataframe and add a column specifying the source (`model_post` argument)
-    """
-    columns_list = {
-        x: f'{x}{column_post}' for x in ['normalised_h','length','tokens_h','sum_h','xu_h']
-    }
-    if model_post is not None:
-        if 'model' in df.columns:
-            # take one model and copy this dataframe
-            existing_models = df.model.unique()
-            dataframe = df[df.model == existing_models[0]]
-            # will basically overwrite every column
-        else: 
-            dataframe = df
-        dataframe['model'] = model_post
-    else:
-        dataframe = df
-
+def results_to_df(dataframe:pd.DataFrame, sent_avg_logp:list, tokens_logp:list, sent_length:list,
+                        out_file_name:str=None, sentence_tokens:list=None, column_post:str=None):
     # TODO: check all lengths
-    dataframe[columns_list['normalised_h']] = sent_avg_logp
-    dataframe[columns_list['length']] = sent_length
-    dataframe[columns_list['tokens_h']] = tokens_logp
-    dataframe[columns_list['sum_h']] = dataframe.normalised_h * dataframe.length
+    dataframe['normalised_h'] = sent_avg_logp
+    dataframe['length'] = sent_length
+    dataframe['tokens_h'] = tokens_logp
+    dataframe['sum_h'] = dataframe.normalised_h * dataframe.length
     # could add tokens to make sure which tokens
     if sentence_tokens is not None:
         dataframe['tokens'] = sentence_tokens
 
-    h_bar = dataframe.groupby(columns_list['length']).agg({
-                            columns_list["normalised_h"]: "mean"}).to_dict()[columns_list['normalised_h']]
-    dataframe[columns_list['xu_h']] = dataframe.apply(lambda x: np.nan if x[columns_list['length']] not in h_bar 
-                                        else x[columns_list['normalised_h']]/h_bar[x[columns_list['length']]], axis=1)
+    h_bar = dataframe.groupby('length').agg({"normalised_h": "mean"}).to_dict()['normalised_h']
+    dataframe['xu_h'] = dataframe.apply(lambda x: np.nan if x.length not in h_bar else x.normalised_h/h_bar[x.length], axis=1)
 
-    #if column_post is not None:
-    #    dataframe.rename(columns={col:f'{col}{column_post}' for col in ['normalised_h','length','tokens_h','sum_h','xu_h']}, 
-    #                        inplace=True)
-    if (model_post is not None) and ('model' in df.columns): # add to existing dataframe
-        dataframe = pd.concat([df, dataframe], axis=0, ignore_index=True)
+    if column_post is not None:
+        dataframe.rename(columns={col:f'{col}{column_post}' for col in ['normalised_h','length','tokens_h','sum_h','xu_h']}, 
+                            inplace=True)
 
     if out_file_name is not None:
         dataframe.to_csv(f'{out_file_name}.csv',index=False)
     return dataframe
+
+def pivot_results_df(df:pd.DatFrame, post_patterns:list) -> pd.DataFrame:
+    """Adapting results_to_df dataframe in case of multiple instances of one test set into several columns. 
+    Cannot be done during inference since it changes the number of examples.
+    """
+    main_columns = [col for col in df.columns if 
+            not any([pat in col for pat in ['xu_h','context','normalised_h','length','tokens_h','sum_h']])]
+    pivot_df = []
+    for pat in post_patterns:
+        pat_columns = [f'context{pat}',f'normalised_h{pat}', f'length{pat}', f'tokens_h{pat}', 
+                                    f'sum_h{pat}', f'xu_h{pat}']
+        tmp = df[ main_columns + pat_columns]
+        tmp.rename(columns={col:col.replace(pat,'') for col in pat_columns}, inplace=True)
+        tmp['model_pattern'] = pat
+        pivot_df.append(tmp)
+    pivot_df = pd.concat(pivot_df)
+    return pivot_df
