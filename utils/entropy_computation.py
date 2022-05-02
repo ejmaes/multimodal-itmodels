@@ -86,7 +86,7 @@ def batch_predict_entropy(lm, batch, tokenizer, device, batch_predict_logits): #
         sentence = batch['input_ids'][s_id,:]
         sentence_logp = []
         # for every token
-        for token_index in range(batch['start_idx'][s_id], max_sent_length - 1): # -1 bc eos
+        for token_index in range(batch['start_idx'][s_id], max_sent_length): # -1 bc eos
             w_id = sentence[token_index]
             # skip special tokens (BOS, EOS, PAD) + speaker token # TODO: add speaker tokens
             if w_id in tokenizer.all_special_ids: # and w_id != unk_id:
