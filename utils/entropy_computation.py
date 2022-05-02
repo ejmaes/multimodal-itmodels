@@ -92,7 +92,8 @@ def batch_predict_entropy(lm, batch, tokenizer, device, batch_predict_logits): #
         # for every token
         # XXX: issue with a sentence with no context - 1rst token will not be planned
         for token_index in range(max(0,batch['start_idx'][s_id] - 1), max_sent_length-1): # -1 bc looking ahead
-            w_id = sentence[token_index]
+            pred_index = token_index + 1
+            w_id = sentence[pred_index]
             # skip special tokens (BOS, EOS, PAD) + speaker token # TODO: add speaker tokens
             if w_id in tokenizer.all_special_ids: # and w_id != unk_id:
                 # print('w_id in tokenizer.all_special_ids')
