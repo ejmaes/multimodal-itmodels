@@ -133,7 +133,7 @@ def results_to_df(dataframe:pd.DataFrame, sent_avg_logp:list, tokens_logp:list, 
         dataframe.to_csv(f'{out_file_name}.csv',index=False)
     return dataframe
 
-def pivot_results_df(df:pd.DatFrame, post_patterns:list) -> pd.DataFrame:
+def pivot_results_df(df:pd.DataFrame, post_patterns:list) -> pd.DataFrame:
     """Adapting results_to_df dataframe in case of multiple instances of one test set into several columns. 
     Cannot be done during inference since it changes the number of examples.
     """
