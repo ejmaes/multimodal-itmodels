@@ -55,10 +55,14 @@ def _create_context(df:pd.DataFrame, context_len:int=5, **kwargs) -> list:
 def create_context(df: pd.DataFrame, context_len:int=5, add_ipu_speaker_tokens:bool=False) -> list:
     if add_ipu_speaker_tokens:
         df['text'] = df.apply(lambda x: f"<{x.speaker}> {x.text}", axis=1)
-    context_len = context_len+1 # bc of range
-    prev_sentences = pd.concat([df.text.shift() for x in range(1,context_len)], axis=1, keys=[f'shift_{i}' for i in range(1,context_len)])
-    prev_files = pd.concat([df.file == df.file.shift() for x in range(1,context_len)], axis=1, keys=[f'shift_{i}' for i in range(1,context_len)])
+    # naming columns f'shift_-{str(i).zfill(1+context_len//10)}'
+    prev_sentences = pd.concat([df.text.shift(-x) for x in range(-context_len,0)], 
+                               axis=1, keys=[f'shift_{i}' for i in range(-context_len,0)])
+    prev_files = pd.concat([df.file == df.file.shift(-x) for x in range(-context_len,0)], 
+                           axis=1, keys=[f'shift_{i}' for i in range(-context_len,0)])
     prev_sentences = prev_sentences*prev_files # removing context obtained from previous files
+    prev_sentences.fillna('', inplace=True)
+    # columns are (normally) ordered to be joined correctly
     sentence_context = prev_sentences.apply(' '.join, axis=1).tolist()
     return [x.strip().replace('  ',' ') for x in sentence_context]
 
