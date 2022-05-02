@@ -33,7 +33,7 @@ def aggregate_dialog(df:pd.DataFrame, add_speaker_tokens:bool=False, add_ipu_spe
             'speaker': lambda x: list(x)[0],
             'text': lambda x: ' '.join(x)
         }).reset_index(drop=False)
-        df['text'] = df.apply(lambda x: f"<{x.who}> {x['$m']}", axis=1)
+        df['text'] = df.apply(lambda x: f"<{x.speaker}> {x.text}", axis=1)
     elif add_ipu_speaker_tokens:
         df['text'] = df.apply(lambda x: f"<{x.speaker}> {x.text}", axis=1)
     # then only concatenating wrt files
@@ -135,7 +135,40 @@ def load_dataset(files_path:list, tokenizer, block_size:int=8, stop_if_error:boo
 class ContextualisedDatasetControl(torch.utils.data.Dataset):
     def __init__(self, tokenizer, max_seq_len, context_field, 
                 df:pd.DataFrame=None, data_folder:str=None,
-                add_special_tokens=True): # whether to add 
+                add_special_tokens=True, context_length=0): # whether to add 
         if df is None and data_folder is None:
             raise ValueError("'df' and 'data_folder' parameters cannot both be empty")
+        elif df is not None:
+            self.data = df
+        else: 
+            self.data = pd.read_csv(data_folder) 
         
+        self.add_special_tokens = add_special_tokens
+        self.context_length = context_length
+        self.text_column = '' if context_length > 0 else 'text'
+        self.tokenizer = tokenizer
+
+        if add_special_tokens:
+            # add special tokens to tokenizer
+            special_tokens = [f"<{x}>" for x in self.data.speaker.unique()]
+            pass
+
+        self.data['tokenized'] = self.data[self.text_column].apply(lambda x: self.tokenizer(x, return_tensors='pt'))
+
+        """From Guilliani & Fernandez
+        inputs = self.tokenizer(sentence, return_tensors='pt', truncation=True, 
+                        add_special_tokens=False, max_length=max_seq_len + 2)
+            self.data.append((inputs, idx))
+        """
+        self.model_data = {
+            'inputs': None,
+            'attention': None,
+        }
+
+        
+
+    def __len__(self):
+        return self.data.shape[0]
+
+    def __getitem__(self, index):
+        return self.model_data[index]
