@@ -7,6 +7,7 @@ from torch.nn.functional import log_softmax
 from tqdm import tqdm
 
 from lstm import GRUModel
+from torch import nn
 
 LOG_2 = torch.log(torch.tensor(2.))
 
@@ -156,10 +157,15 @@ def pivot_results_df(df:pd.DataFrame, post_patterns:list) -> pd.DataFrame:
 
 
 #%% Perplexity
-def compute_perplexity(model, encodings, device, stride:int=8):
+def compute_perplexity(model, encodings, device, stride:int=8, 
+        model_is_lm:bool=True, 
+        max_length:int=None, criterion = nn.CrossEntropyLoss() # if model is not LM
+    ):
     """From HuggingFace documentation - https://huggingface.co/docs/transformers/perplexity
+    Adapted for non HF models
     """
-    max_length = model.config.n_positions
+    if model_is_lm and max_length is None:
+        max_length = model.config.n_positions
 
     nlls = []
     for i in tqdm(range(0, encodings.input_ids.size(1), stride)):
@@ -171,8 +177,13 @@ def compute_perplexity(model, encodings, device, stride:int=8):
         target_ids[:, :-trg_len] = -100
 
         with torch.no_grad():
-            outputs = model(input_ids, labels=target_ids)
-            neg_log_likelihood = outputs[0] * trg_len
+            if model_is_lm:
+                outputs = model(input_ids, labels=target_ids)
+                neg_log_likelihood = outputs[0] * trg_len
+            else:
+                outputs = model(input_ids[:,:-1]) 
+                loss = criterion(outputs.transpose(1, 2), target_ids[:,1:])
+                neg_log_likelihood = loss * trg_len # no .item(), need tensor
 
         nlls.append(neg_log_likelihood)
 

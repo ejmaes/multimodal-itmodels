@@ -161,7 +161,7 @@ if __name__ == '__main__':
         test_file = f'~/Downloads/test-data-text.txt'
         test_df[text_col].to_csv(test_file, index=False, header=False)
         args.slrim_output = f"{args.original_dataframe.replace('.csv','')}_srilm-{args.srilm_lm.split('/')[-1]}.txt"
-        srilm_command = f"./{args.srilm_path} -lm {args.srilm_lm} -ppl {test_file} -unk -debug 2 > {args.slrim_output}"
+        srilm_command = f"./{args.srilm_path} -lm {args.srilm_lm} -ppl {test_file} -no-eos -unk -debug 2 > {args.slrim_output}"
         print(f"SRILM command: `{srilm_command}`")
         os.system(srilm_command)
         args.srilm_lm = args.srilm_lm.split('/')[-1] # rename for later convenience in naming model
@@ -176,6 +176,10 @@ if __name__ == '__main__':
     print(f'SRILM File stats: {file_stats} \nDataframe shape: {l.shape}')
     l['tokens'] = l['pred_tokens'].apply(lambda x: [d['pred_word'] for d in x if d['pred_word'] != '<s>'])
     l['tokens_h'] = l['pred_tokens'].apply(lambda x: [d['logp'] for d in x if d['pred_word'] != '<s>'])
+    # Computing metrics
+    l['normalised_h'] = l.apply(lambda x: abs(x.sum_logp)/x.length, axis=1)
+    h_bar = l.groupby('length').agg({"normalised_h": "mean"}).to_dict()['normalised_h']
+    l['xu_h'] = l.apply(lambda x: 1. if x.length not in h_bar else x.normalised_h/h_bar[x.length], axis=1) # 1 bc mean _is_ value so value/mean = 1.
     # Merge with original
     if l.shape[0] != test_df.shape[0]:
         #raise IndexError("DataFrames don't have the same shape, merging not possible")
