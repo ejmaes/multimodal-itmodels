@@ -118,11 +118,19 @@ def create_full_context(df: pd.DataFrame, text_col:str='text',
     #c = df.groupby(file_col).agg({text_col:list})[text_col].to_dict()
     #df['text_full'] = df.apply(lambda x: ' '.join(c[x[file_col]][:x[index_col]+1]).strip(), axis=1)
     # Method 2 - faster
+    """
     c = df.groupby(file_col)
     cc = pd.DataFrame(c.agg({text_col:list})[text_col].apply(lambda x: [join_sep.join(x[:i]) for i in range(len(x))]).explode() # note: text will not be used since added later
                         ).reset_index(drop=False)
     cc[index_col] = c.agg({text_col:len})[text_col].apply(lambda x: range(x)).explode().reset_index(drop=True)
     df = pd.merge(left=df, left_on=[file_col, index_col], right=cc, right_on=[file_col, index_col], suffixes=('','_full')) # merging bc index might not be ordered identically bc of groupby
+    """
+    c = df.groupby(file_col).agg({
+        text_col: lambda x: [join_sep.join(list(x)[:i]) for i in range(len(x))], # if using +1 then not adding the last line (concat)
+        index_col: list
+    })
+    c = c.explode([text_col, index_col]).reset_index(drop=False)
+    df = pd.merge(left=df, left_on=[file_col, index_col], right=c, right_on=[file_col, index_col], how='outer', suffixes=('','_full')) # merging bc index might not be ordered identically bc of groupby
     # full_text is currently only context, adding text and separator:
     df[f'{text_col}_full'] = (df[f'{text_col}_full']+sep_token+df[text_col]).apply(lambda x: x.strip().replace('  ',' ')) 
 
@@ -130,7 +138,7 @@ def create_full_context(df: pd.DataFrame, text_col:str='text',
 
 
 
-#%% Create dataloader
+#%% Create dataset
 """Dataset notes from https://huggingface.co/docs/datasets/use_dataset
 ```
 padding (bool, str or PaddingStrategy, optional, defaults to False) –
@@ -145,7 +153,7 @@ def create_context_dataset_from_df(df: pd.DataFrame, tokenizer, context_col:str=
                                 text_col:str='text', file_col:str='file', 
                                 max_length:int=256, batch_size:int=8
                     ):
-    """Create context dataloader based on previously created column in dataframe
+    """Create context dataset based on previously created column in dataframe
     """
     tok_cont_kwargs = {'truncation':True, 'padding':'longest', 'max_length':max_length}
     tok_text_kwargs = {'truncation':True, 'padding':False} if context_col is not None else tok_cont_kwargs
@@ -175,3 +183,68 @@ def create_context_dataset_from_df(df: pd.DataFrame, tokenizer, context_col:str=
         dataset_c = dataset_c.map(lambda x: {"start_idx": 0.}) # non 0 tokens are words
 
     return dataset_c
+
+
+def create_context_dataset(dataframe: pd.DataFrame, tokenizer, files_train:list=None, files_test:list=None, 
+                              text_col:str='text', file_col:str='file', index_col:str='index', speaker_col='speaker',
+                              max_length:int=1024, batch_size:int=8,        
+                              sep_token:str=' ', sep_context_sent:bool=False, **text_kwargs):
+    """All-in-one function: Create context and dataset all at once dataset
+    """
+    # Copying df to avoid issues rerunning the function
+    df = dataframe.copy(deep=True)
+
+    # Parametrize
+    df[f'{text_col}_u'] = _add_to_text(df, text_col=text_col, speaker_col=speaker_col, file_col=file_col, **text_kwargs)
+    join_sep = ' ' if sep_context_sent else sep_token 
+    text_col = f'{text_col}_u' # for further usage
+    # Same but with tokenizes id
+    sep_tok = tokenizer.encode(sep_token) if sep_token != ' ' else []
+    join_st = sep_tok if not sep_context_sent else []
+    rev_join_st = sep_tok if sep_context_sent else [] # ie, if sep_tok has been added to the sentences previously, no need to add it for final concat
+
+    df['text_input_ids'] = df[text_col].apply(lambda x: join_st + tokenizer(x, truncation=True, padding=False)['input_ids'])
+    df['length'] = df.text_input_ids.apply(len)
+
+    #def prepend_ll(x:list, join_pat:list):
+    #    """Add this pattern to each list element"""
+    #    return [join_pat + y for y in x]
+
+    c = df.groupby(file_col).agg({
+        text_col: lambda x: [join_sep.join(list(x)[:i]) for i in range(len(x))], # if using +1 then not adding the last line (concat)
+        'text_input_ids': lambda x: [(list(itertools.chain(*list(x)[:i]))) for i in range(len(x))], # if using +1 then not adding the last line (concat)
+        index_col: list
+    })
+    c = c.explode([text_col, index_col, 'text_input_ids']).reset_index(drop=False)
+    df = pd.merge(left=df, left_on=[file_col, index_col], right=c, right_on=[file_col, index_col], how='outer', suffixes=('','_full')) # merging bc index might not be ordered identically bc of groupby
+    # full_text is currently only context, adding text and separator:
+    df[f'{text_col}_full'] = (df[f'{text_col}_full']+sep_token+df[text_col])#.apply(lambda x: x.strip().replace('  ',' ')) 
+    df['input_ids'] = df.apply(lambda x: (x['text_input_ids_full']+rev_join_st+x['text_input_ids'])[-max_length:], axis=1) # keep only the correct number of elements
+
+    df['start_idx'] = df.apply(lambda x: len(x.input_ids) - x.length, axis = 1)
+    df['attention_mask'] = df.input_ids.apply(lambda x: [1]*len(x))
+    # Dataset 
+    if files_train is not None:
+        dataset_c = DatasetDict({
+            'train': Dataset.from_pandas(df[df[file_col].isin(files_train)]),
+            'test': Dataset.from_pandas(df[df[file_col].isin(files_test)])
+        }) 
+    else:
+        dataset_c = Dataset.from_pandas(df)
+      
+    # drop extra columns from dataframe
+    #df.drop(['text_input_ids', 'text_input_ids_full', 'attention_mask'], axis=1, inplace = True)
+    return dataset_c, df
+
+
+def get_perplexity_encodings(df:pd.DataFrame, tokenizer, 
+                        text_col:str='text', file_col:str='file', 
+                        sep_token:str=' ', files_test:list=None):
+    """From HuggingFace documentation - https://huggingface.co/docs/transformers/perplexity
+    Adding sep parameter to match data used in experiments (can be ' ' or tokenizer.eos_token or...)
+    """
+    file_texts = df.groupby(file_col).agg({text_col: lambda x: sep_token.join(x).strip().replace('  ',' ')}).reset_index()
+    if files_test is None:
+        files_test = file_texts[file_col].unique()
+    encodings = tokenizer("\n\n".join(file_texts[file_texts[file_col].isin(files_test)][text_col].tolist()), return_tensors = "pt")
+    return encodings 
