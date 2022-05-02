@@ -7,6 +7,7 @@ from datetime import datetime
 from sklearn.model_selection import train_test_split
 from transformers.data.data_collator import default_data_collator
 from transformers import TextDataset, DataCollatorForLanguageModeling
+from datasets import load_dataset, Dataset, DatasetDict # also huggingface
 
 import torch
 from torch.utils.data import DataLoader
@@ -25,168 +26,152 @@ def write_txt(lines:list, filepath:str):
     with open(filepath, 'w') as f:
         f.write("\n".join(lines))
 
-def aggregate_dialog(df:pd.DataFrame, add_speaker_tokens:bool=False, add_ipu_speaker_tokens:bool=False) -> pd.DataFrame:
-    """Returns a df containing, for each file, the aggregated text, with or without token markers
-    """
-    if add_speaker_tokens and not add_ipu_speaker_tokens:
-        df['cumsum'] = ((df.file != df.file.shift()) | (df.speaker != df.speaker.shift())).astype(int).cumsum()
-        df = df.groupby(['file','cumsum']).agg({
-            'speaker': lambda x: list(x)[0],
-            'text': lambda x: ' '.join(x)
-        }).reset_index(drop=False)
-        df['text'] = df.apply(lambda x: f"<{x.speaker}> {x.text}", axis=1)
-    elif add_ipu_speaker_tokens:
-        df['text'] = df.apply(lambda x: f"<{x.speaker}> {x.text}", axis=1)
-    # then only concatenating wrt files
-    return df.groupby('file').agg({ 'text': lambda x: ' '.join(x).strip().replace('  ',' ') })
 
-def _create_context(df:pd.DataFrame, context_len:int=5, **kwargs) -> list:
-    """Iterate on dataframe rows to get the context of N previous IPU
-    """
-    l = []
-    for _, row in df.iterrows():
-        # select the past 
-        tmp = df[df.file == row.file]
-        tmp = tmp[tmp['index'].between(max(0,row['index']-context_len), row['index'])]
-        sentence_context = aggregate_dialog(tmp, **kwargs).text.iloc[0]
-        l.append(sentence_context) 
-    return l
 
-def create_context(df: pd.DataFrame, context_len:int=5, add_ipu_speaker_tokens:bool=False) -> list:
+#%% Create context & add sep tokens
+def _add_to_text(df:pd.DataFrame, text_col:str='text',
+                   speaker_col:str='speaker', file_col:str='file',
+                   add_ipu_speaker_tokens:bool=False, add_speaker_tokens:bool=False, **kwargs):
+    """Common to create_context functions - update text with needed speaker tags
+
+    Input
+    ----------
+    add_speaker_tokens: bool, default False,
+        Whether to add the speaker tokens everytime there is a change
+
+    add_ipu_speaker_tokens: bool, default False
+        Whether to add the speaker tokens _for each ipu_; if True then add_speaker_token is also technically applied
+    
+    Returns
+    -----------
+    updated_text: pd.Series
+        The updated column containing the text
+    """
     if add_ipu_speaker_tokens:
-        df['text'] = df.apply(lambda x: f"<{x.speaker}> {x.text}", axis=1)
+        updated_text = df.apply(lambda x: f"<{x[speaker_col]}> {x[text_col]}", axis=1)
+    elif add_speaker_tokens:
+        df['cs'] = ((df[file_col] != df[file_col].shift()) | (df[speaker_col] != df[speaker_col].shift()))
+        # Different ways to do it: columns multiplication cs*speaker + text - but will end up adding a .apply anyway to add the <> to the token
+        updated_text = df.apply(lambda x: f"<{x[speaker_col]}> {x[text_col]}" if x.cs else x[text_col], axis=1)
+    else: # in order not to rewrite text column (case of multiple experiments)
+        updated_text = df[text_col]
+
+    return updated_text
+
+def create_context(df: pd.DataFrame, context_len:int=5, text_col:str='text',
+                   speaker_col:str='speaker', file_col:str='file', 
+                   sep_token:str=' ', sep_context_sent:bool=False, **text_kwargs) -> pd.Series:
+    """Creates a context based on a fixed number of IPUs anterior to the sentence, and concat, eventually using tokens/speakers to separate
+
+    Ways to adapt:
+        * Add a sep_token _before_ starting the sentence
+        * Add a sep_token _after_ finishing the sentence
+
+    Input
+    --------
+    sep_token: str, default None
+        Which token to add at the end of the sentence (tokenizer.eof_token, tokenizer.sep_token...)
+
+    sep_context_sent: bool, default False
+        Whether to add a separator between context and text. If True, sep_token is only applied there; if False, sep_token is applied everywhere
+    """
+    df[f'{text_col}_u'] = _add_to_text(df, text_col=text_col, speaker_col=speaker_col, file_col=file_col, **text_kwargs)
+    join_sep = ' ' if sep_context_sent else sep_token 
+    text_col = f'{text_col}_u' # for further usage
+
     # naming columns f'shift_-{str(i).zfill(1+context_len//10)}'
-    prev_sentences = pd.concat([df.text.shift(-x) for x in range(-context_len,0)], 
+    prev_sentences = pd.concat([df[text_col].shift(-x) for x in range(-context_len,0)], 
                                axis=1, keys=[f'shift_{i}' for i in range(-context_len,0)])
-    prev_files = pd.concat([df.file == df.file.shift(-x) for x in range(-context_len,0)], 
+    prev_files = pd.concat([df[file_col] == df[file_col].shift(-x) for x in range(-context_len,0)], 
                            axis=1, keys=[f'shift_{i}' for i in range(-context_len,0)])
     prev_sentences = prev_sentences*prev_files # removing context obtained from previous files
     prev_sentences.fillna('', inplace=True)
     # columns are (normally) ordered to be joined correctly
-    sentence_context = prev_sentences.apply(' '.join, axis=1).tolist()
-    return [x.strip().replace('  ',' ') for x in sentence_context]
+    sentence_context = prev_sentences.apply(join_sep.join, axis=1)
+    # add context to text, separated by (eventual) sep_token (default space) and return
+    cc = (sentence_context+sep_token+df[text_col]).apply(lambda x: x.strip().replace('  ',' ')) 
 
+    return cc
 
-def tvt_split(text_list, ratio:list) -> dict:
-    splits = {}
-    s_ratio = 0.
-    while len(ratio) >= 2:
-        split_name = 'train' if len(splits) == 0 else f'test_{len(splits)-1}'
-        r = ratio.pop(0)
-        train, text_list = train_test_split(text_list, train_size=(r/(1-s_ratio)))
-        splits[split_name] = train
-        s_ratio += r
-    splits['test'] = text_list
-    return splits
+def create_full_context(df: pd.DataFrame, text_col:str='text',
+                   speaker_col:str='speaker', file_col:str='file', index_col:str='index',
+                   sep_token:str=' ', sep_context_sent:bool=False, **text_kwargs) -> pd.Series:
+    """Creates a context containing every IPU previously used, and concat, eventually using tokens/speakers to separate
 
-def create_context_corpus(dialogs: pd.DataFrame, textdataset_path:str, ratio:list=[0.75, 0.25], 
-                context_len:int=None, write_to_csv:bool=True,
-                add_speaker_tokens:bool=False, add_ipu_speaker_tokens:bool=False):
-    # step 1: concatenate each file
-    dialogs['context_text'] = create_context(dialogs, context_len, 
-                        add_speaker_tokens=add_speaker_tokens, add_ipu_speaker_tokens=add_ipu_speaker_tokens)
-    # step 2: train/test split on the list
-    splits = tvt_split(dialogs.index, ratio)
-    if write_to_csv:
-        for fname, lines in splits.items():
-            name = f'{fname}_ctx-{context_len}_spk-{int(add_speaker_tokens)}{int(add_ipu_speaker_tokens)}.csv'
-            dialogs.loc[lines].to_csv(os.path.join(textdataset_path, name), index=False)
-    else:
-        dialogs['split'] = None
-        for split, lines in splits.items():
-            dialogs.loc[lines, 'split'] = split
-        return dialogs
+    Ways to adapt:
+        * Add a sep_token _before_ starting the sentence
+        * Add a sep_token _after_ finishing the sentence
 
-def create_textdataset_corpus(dialogs:pd.DataFrame, textdataset_path:str, write_to_text:bool=True,
-                ratio:list=[0.75, 0.25], add_speaker_tokens:bool=False, add_ipu_speaker_tokens:bool=False):
-    """
-    """
-    # step 1: concatenate each file
-    df = aggregate_dialog(dialogs, add_speaker_tokens, add_ipu_speaker_tokens)
-    text_list = df.text.tolist()
-    # step 2: train/test split on the list
-    splits = tvt_split(text_list, ratio)
-    # step 3: return or write to text
-    if write_to_text:
-        for fname, lines in splits.items():
-            name = f'{fname}_spk-{int(add_speaker_tokens)}{int(add_ipu_speaker_tokens)}.txt'
-            write_txt(lines, os.path.join(textdataset_path, name))
-        with open(os.path.join(textdataset_path, "data_list.txt"), 'a+') as f:
-            f.write(f"{datetime.now().strftime('%Y%m%d-%H:%M:%S')} - Creation of a text dataset WITH{'OUT'*(not add_speaker_tokens)} speaker tokens and WITH{'OUT'*(not add_ipu_speaker_tokens)} IPU tokens; ratios {ratio}; number of lines {[len(x) for x in splits.values()]}\n")
-    else:
-        return splits
-
-
-
-
-#%% Existing DataLoaders
-def load_dataset(files_path:list, tokenizer, block_size:int=8, stop_if_error:bool=True):
-    """Creates a dataset from files with 1 line = 1 text / dialog (whole)
-
-    Input:
+    Input
     --------
-    files_path: list of str
-    block_size: int, number of tokens to have in one item
-    stop_it_error: bool, whether to skip files with errors
+    sep_token: str, default None
+        Which token to add at the end of the sentence (tokenizer.eof_token, tokenizer.sep_token...)
+
+    sep_context_sent: bool, default False
+        Whether to add a separator between context and text. If True, sep_token is only applied there; if False, sep_token is applied everywhere
     """
-    datasets = {}
-    for file_path in files_path:
-        # check file path
-        if not isinstance(file_path, str) or not os.path.exists(file_path) or not os.path.isfile(file_path):
-            if stop_if_error:
-                raise ValueError(f"'{file_path}' is not a correct file path")
-            else: 
-                continue
+    df[f'{text_col}_u'] = _add_to_text(df, text_col=text_col, speaker_col=speaker_col, file_col=file_col, **text_kwargs)
+    join_sep = ' ' if sep_context_sent else sep_token 
+    text_col = f'{text_col}_u' # for further usage
+    
+    # Method 1 - slightly slower
+    #c = df.groupby(file_col).agg({text_col:list})[text_col].to_dict()
+    #df['text_full'] = df.apply(lambda x: ' '.join(c[x[file_col]][:x[index_col]+1]).strip(), axis=1)
+    # Method 2 - faster
+    c = df.groupby(file_col)
+    cc = pd.DataFrame(c.agg({text_col:list})[text_col].apply(lambda x: [join_sep.join(x[:i]) for i in range(len(x))]).explode() # note: text will not be used since added later
+                        ).reset_index(drop=False)
+    cc[index_col] = c.agg({text_col:len})[text_col].apply(lambda x: range(x)).explode().reset_index(drop=True)
+    df = pd.merge(left=df, left_on=[file_col, index_col], right=cc, right_on=[file_col, index_col], suffixes=('','_full')) # merging bc index might not be ordered identically bc of groupby
+    # full_text is currently only context, adding text and separator:
+    df[f'{text_col}_full'] = (df[f'{text_col}_full']+sep_token+df[text_col]).apply(lambda x: x.strip().replace('  ',' ')) 
 
-        # load dataset
-        datasets[file_path.split('/')[-1]] = TextDataset(
-            tokenizer = tokenizer,
-            file_path = file_path,
-            block_size = block_size # block size is the max_length :| 
-        )
-    data_collator = DataCollatorForLanguageModeling(tokenizer = tokenizer, mlm=False) # causal here
-
-    return datasets, data_collator
+    return df[f'{text_col}_full']
 
 
-#%% Custom DataLoaders
-class ContextualisedDatasetControl(torch.utils.data.Dataset):
-    def __init__(self, tokenizer, max_seq_len, context_field, 
-                df:pd.DataFrame=None, data_folder:str=None,
-                add_special_tokens=True, context_length=0): # whether to add 
-        if df is None and data_folder is None:
-            raise ValueError("'df' and 'data_folder' parameters cannot both be empty")
-        elif df is not None:
-            self.data = df
-        else: 
-            self.data = pd.read_csv(data_folder) 
-        
-        self.add_special_tokens = add_special_tokens
-        self.context_length = context_length
-        self.text_column = '' if context_length > 0 else 'text'
-        self.tokenizer = tokenizer
 
-        if add_special_tokens:
-            # add special tokens to tokenizer
-            special_tokens = [f"<{x}>" for x in self.data.speaker.unique()]
-            pass
+#%% Create dataloader
+"""Dataset notes from https://huggingface.co/docs/datasets/use_dataset
+```
+padding (bool, str or PaddingStrategy, optional, defaults to False) –
+Activates and controls padding. Accepts the following values:
+* True or 'longest': Pad to the longest sequence in the batch (or no padding if only a single sequence if provided).
+* 'max_length': Pad to a maximum length specified with the argument max_length or to the maximum acceptable input length for the model if that argument is not provided.
+* False or 'do_not_pad' (default): No padding (i.e., can output a batch with sequences of different lengths)
+```
+"""
+def create_context_dataset_from_df(df: pd.DataFrame, tokenizer, context_col:str=None, 
+                                files_train=None, files_test=None,
+                                text_col:str='text', file_col:str='file', 
+                                max_length:int=256, batch_size:int=8
+                    ):
+    """Create context dataloader based on previously created column in dataframe
+    """
+    tok_cont_kwargs = {'truncation':True, 'padding':'longest', 'max_length':max_length}
+    tok_text_kwargs = {'truncation':True, 'padding':False} if context_col is not None else tok_cont_kwargs
 
-        self.data['tokenized'] = self.data[self.text_column].apply(lambda x: self.tokenizer(x, return_tensors='pt'))
+    # Dataset creation
+    if (files_train is None) and (files_test is None):
+        dataset_c = Dataset.from_pandas(df)
+    else:
+        dataset_c = DatasetDict({
+            'train': Dataset.from_pandas(df[df[file_col].isin(files_train)]),
+            'test': Dataset.from_pandas(df[df[file_col].isin(files_test)])
+        })
+    # First map text 
+    dataset_c = dataset_c.map(lambda x: tokenizer(x[text_col], **tok_text_kwargs), batched=True, batch_size=batch_size)
+    # Then get lengths & number of tokens which aren't padding
+    #dataset_c = dataset_c.map(lambda x: {"length": x['attention_mask'].sum().item()}) # non 0 tokens are words
+    dataset_c = dataset_c.map(lambda x: {"length": sum(x['attention_mask'])}) # non 0 tokens are words
 
-        """From Guilliani & Fernandez
-        inputs = self.tokenizer(sentence, return_tensors='pt', truncation=True, 
-                        add_special_tokens=False, max_length=max_seq_len + 2)
-            self.data.append((inputs, idx))
-        """
-        self.model_data = {
-            'inputs': None,
-            'attention': None,
-        }
+    if context_col is not None: # if context included
+        # Finally pad context
+        dataset_c = dataset_c.map(lambda x: tokenizer(x[context_col], **tok_cont_kwargs),
+                            batched=True, batch_size=batch_size)
+        # Compute 'start_idx'
+        dataset_c = dataset_c.map(lambda x: {"ct_length": sum(x['attention_mask'])}) # non 0 tokens are words
+        dataset_c = dataset_c.map(lambda x: {"start_idx": x['ct_length'] - x['length']}) # non 0 tokens are words
+    else:
+        dataset_c = dataset_c.map(lambda x: {"start_idx": 0.}) # non 0 tokens are words
 
-        
-
-    def __len__(self):
-        return self.data.shape[0]
-
-    def __getitem__(self, index):
-        return self.model_data[index]
+    return dataset_c
