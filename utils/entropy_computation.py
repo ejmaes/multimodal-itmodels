@@ -156,11 +156,10 @@ def pivot_results_df(df:pd.DataFrame, post_patterns:list) -> pd.DataFrame:
 
 
 #%% Perplexity
-def compute_perplexity(model, encodings, device):
+def compute_perplexity(model, encodings, device, stride:int=8):
     """From HuggingFace documentation - https://huggingface.co/docs/transformers/perplexity
     """
     max_length = model.config.n_positions
-    stride = 8
 
     nlls = []
     for i in tqdm(range(0, encodings.input_ids.size(1), stride)):
