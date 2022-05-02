@@ -1,4 +1,4 @@
-dialogue_id,speaker,transaction_number,transaction_type,move_number,move_type,position_in_dialogue,position_in_transaction,duration,text
+file,speaker,theme_id,transaction_type,move_number,move_type,index,theme_index,duration,text
 q1ec1,g,1,normal,1,ready,1,1,0.3294,okay
 q1ec1,g,1,normal,2,instruct,2,2,3.1785,starting off we are above a caravan park
 q1ec1,f,1,normal,1,acknowledge,3,3,0.34589999999999943,mmhmm
