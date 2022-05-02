@@ -86,7 +86,8 @@ def batch_predict_entropy(lm, batch, tokenizer, device, batch_predict_logits): #
         sentence = batch['input_ids'][s_id,:]
         sentence_logp = []
         # for every token
-        for token_index in range(batch['start_idx'][s_id], max_sent_length): # -1 bc eos
+        # XXX: issue with a sentence with no context - 1rst token will not be planned
+        for token_index in range(max(0,batch['start_idx'][s_id] - 1), max_sent_length-1): # -1 bc looking ahead
             w_id = sentence[token_index]
             # skip special tokens (BOS, EOS, PAD) + speaker token # TODO: add speaker tokens
             if w_id in tokenizer.all_special_ids: # and w_id != unk_id:
@@ -95,6 +96,7 @@ def batch_predict_entropy(lm, batch, tokenizer, device, batch_predict_logits): #
             # increase non-normalised log probability of the sentence
             token_logp = logp_w[s_id, token_index, w_id].item()
             sentence_logp.append(token_logp)
+            #print(f"Sentence {s_id} word idx {token_index} next word id {w_id} is `{tokenizer.decode([w_id])}` - word entropy {token_logp}")
         # append to batch
         batch_logp.append(sentence_logp)
         sentence_logp = np.array(sentence_logp)
