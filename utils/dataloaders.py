@@ -2,6 +2,7 @@ from multiprocessing.sharedctypes import Value
 import os
 import pandas as pd
 import numpy as np
+from datetime import datetime
 
 from sklearn.model_selection import train_test_split
 from transformers.data.data_collator import default_data_collator
@@ -39,7 +40,7 @@ def aggregate_dialog(df:pd.DataFrame, add_speaker_tokens:bool=False, add_ipu_spe
     # then only concatenating wrt files
     return df.groupby('file').agg({ 'text': lambda x: ' '.join(x).strip().replace('  ',' ') })
 
-def create_context(df:pd.DataFrame, context_len:int=5, **kwargs) -> list:
+def _create_context(df:pd.DataFrame, context_len:int=5, **kwargs) -> list:
     """Iterate on dataframe rows to get the context of N previous IPU
     """
     l = []
@@ -51,14 +52,25 @@ def create_context(df:pd.DataFrame, context_len:int=5, **kwargs) -> list:
         l.append(sentence_context) 
     return l
 
+def create_context(df: pd.DataFrame, context_len:int=5, add_ipu_speaker_tokens:bool=False) -> list:
+    if add_ipu_speaker_tokens:
+        df['text'] = df.apply(lambda x: f"<{x.speaker}> {x.text}", axis=1)
+    context_len = context_len+1 # bc of range
+    prev_sentences = pd.concat([df.text.shift() for x in range(1,context_len)], axis=1, keys=[f'shift_{i}' for i in range(1,context_len)])
+    prev_files = pd.concat([df.file == df.file.shift() for x in range(1,context_len)], axis=1, keys=[f'shift_{i}' for i in range(1,context_len)])
+    prev_sentences = prev_sentences*prev_files # removing context obtained from previous files
+    sentence_context = prev_sentences.apply(' '.join, axis=1).tolist()
+    return [x.strip().replace('  ',' ') for x in sentence_context]
+
+
 def tvt_split(text_list, ratio:list) -> dict:
     splits = {}
     s_ratio = 0.
-    while len(ratio) > 2:
+    while len(ratio) >= 2:
         split_name = 'train' if len(splits) == 0 else f'test_{len(splits)-1}'
         r = ratio.pop(0)
         train, text_list = train_test_split(text_list, train_size=(r/(1-s_ratio)))
-        ratio[split_name] = train
+        splits[split_name] = train
         s_ratio += r
     splits['test'] = text_list
     return splits
@@ -77,7 +89,7 @@ def create_context_corpus(dialogs: pd.DataFrame, textdataset_path:str, ratio:lis
             dialogs.loc[lines].to_csv(os.path.join(textdataset_path, name), index=False)
     else:
         dialogs['split'] = None
-        for split in splits.keys():
+        for split, lines in splits.items():
             dialogs.loc[lines, 'split'] = split
         return dialogs
 
@@ -95,6 +107,8 @@ def create_textdataset_corpus(dialogs:pd.DataFrame, textdataset_path:str, write_
         for fname, lines in splits.items():
             name = f'{fname}_spk-{int(add_speaker_tokens)}{int(add_ipu_speaker_tokens)}.txt'
             write_txt(lines, os.path.join(textdataset_path, name))
+        with open(os.path.join(textdataset_path, "data_list.txt"), 'a+') as f:
+            f.write(f"{datetime.now().strftime('%Y%m%d-%H:%M:%S')} - Creation of a text dataset WITH{'OUT'*(not add_speaker_tokens)} speaker tokens and WITH{'OUT'*(not add_ipu_speaker_tokens)} IPU tokens; ratios {ratio}; number of lines {[len(x) for x in splits.values()]}\n")
     else:
         return splits
 
