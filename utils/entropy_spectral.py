@@ -34,12 +34,13 @@ def parse_arguments():
     parser.add_argument("--moves_and_deviation", '-da', action="store_true", help="Additional data for performance analysis")
     parser.add_argument("--dataframe_col_special", '-dfc', type=dict, default={}, help=f"Dataframe columns - if empty keep default.")
     parser.add_argument("--file_model", type=str, default=None, help=f"If several models in the file, which file to keep - model_col must be set in dataframe_col_special")
+    parser.add_argument("--fft_on", '-f', type=str, default='xu_h', help=f"Which column (xu_h, normalised_h) to run analysis on.")
 
     args = parser.parse_args()
     # Also for dataframe: column settings
     dataframe_col_default = {
         'text_col':'text', 'file_col':'file', 'index_col':'index', 'theme_col':'theme', 'speaker_col':'speaker', 'xu_col':'xu_h',
-        'tokens_col':'tokens', 'sum_h_col':'sum_h', 'length_col':'length', 'normalised_h_col':'normalised_h_col'
+        'tokens_col':'tokens', 'sum_h_col':'sum_h', 'length_col':'length', 'normalised_h_col':'normalised_h'
     }
     for k,v in dataframe_col_default.items():
         if k not in args.dataframe_col_special:
@@ -151,7 +152,7 @@ def compute_rp(dataframe:pd.DataFrame, speaker_col:str="speaker", xu_col:str="xu
 if __name__ == '__main__':
     args = parse_arguments()
     df = pd.read_csv(args.data_path)
-    save_file_pat = f"{args.data_path.replace('.csv','')}_agg{int(args.aggregate)}_theme{int(args.theme_apply)}{f'_{args.file_model}' if args.file_model is not None else ''}"
+    save_file_pat = f"{args.data_path.replace('.csv','')}_agg{int(args.aggregate)}_theme{int(args.theme_apply)}{f'_{args.file_model}' if args.file_model is not None else ''}_{args.fft_on}"
 
     if args.file_model is not None:
         df = df[df[args.dataframe_col_special['model_col']] == args.file_model]
@@ -163,11 +164,12 @@ if __name__ == '__main__':
         df = df[(~df[args.dataframe_col_special['theme_col'].isna()]) & (df[args.dataframe_col_special['theme_col'] != " "])]
         df['filextheme'] = df[args.dataframe_col_special['file_col']] + ' x ' + df[args.dataframe_col_special['theme_col']]
         args.dataframe_col_special['file_col'] = 'filextheme'
+    args.dataframe_col_special['xu_h'] = args.fft_on
 
     # Compute PSO
     # spec_pgram is a function from spectrum
     file_col = args.dataframe_col_special['file_col']
-    xu_col = args.dataframe_col_special['xu_col']
+    xu_col = args.dataframe_col_special['xu_h']
     speaker_col = args.dataframe_col_special['speaker_col']
     index_col = args.dataframe_col_special['index_col']
     df = df.sort_values([file_col,index_col])
@@ -183,7 +185,7 @@ if __name__ == '__main__':
     # Compute RP
     rp = compute_rp(df)
 
-    df_to_save = {f"{save_file_pat}_rp":rp, f"{save_file_pat}_pso":pso}
+    df_to_save = {"_rp":rp, "_pso":pso, "_fft": df_ent_pso}
 
     # %% [markdown]
     # Load extra data such as pathdev from `'data/moves_and_deviation.csv'` for modeling and plotting
@@ -209,7 +211,7 @@ if __name__ == '__main__':
             'peakPS': [lambda x: np.mean(np.abs(x)), lambda x: np.median(np.abs(x)), lambda x: np.max(np.abs(x))]
         }).droplevel(0, axis=1)
         rp_mean.columns = ['pathdev', 'mean', 'median', 'max']
-        df_to_save[f"{save_file_pat}_rp_mean":rp_mean]
+        df_to_save["_rp_mean":rp_mean]
 
     for k,v in df_to_save.items():
-        v.to_csv(k, index=False)
+        v.to_csv(f'{save_file_pat}{k}.csv', index=False)

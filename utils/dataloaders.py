@@ -59,6 +59,19 @@ def _add_to_text(df:pd.DataFrame, text_col:str='text',
 
     return updated_text
 
+
+def _anytype_context(df: pd.DataFrame, context_len:int=5, text_col:str='text', file_col:str='file'):
+    """Can be reused by other concatenation context functions
+    """
+    # naming columns f'shift_-{str(i).zfill(1+context_len//10)}'
+    prev_sentences = pd.concat([df[text_col].shift(-x) for x in range(-context_len,0)], 
+                               axis=1, keys=[f'shift_{i}' for i in range(-context_len,0)])
+    prev_files = pd.concat([df[file_col] == df[file_col].shift(-x) for x in range(-context_len,0)], 
+                           axis=1, keys=[f'shift_{i}' for i in range(-context_len,0)])
+    prev_sentences = prev_sentences*prev_files # removing context obtained from previous files
+    return prev_sentences
+    
+
 def create_context(df: pd.DataFrame, context_len:int=5, text_col:str='text',
                    speaker_col:str='speaker', file_col:str='file', 
                    sep_token:str=' ', sep_context_sent:bool=False, **text_kwargs) -> pd.Series:
@@ -80,12 +93,7 @@ def create_context(df: pd.DataFrame, context_len:int=5, text_col:str='text',
     join_sep = ' ' if sep_context_sent else sep_token 
     text_col = f'{text_col}_u' # for further usage
 
-    # naming columns f'shift_-{str(i).zfill(1+context_len//10)}'
-    prev_sentences = pd.concat([df[text_col].shift(-x) for x in range(-context_len,0)], 
-                               axis=1, keys=[f'shift_{i}' for i in range(-context_len,0)])
-    prev_files = pd.concat([df[file_col] == df[file_col].shift(-x) for x in range(-context_len,0)], 
-                           axis=1, keys=[f'shift_{i}' for i in range(-context_len,0)])
-    prev_sentences = prev_sentences*prev_files # removing context obtained from previous files
+    prev_sentences = _anytype_context(df, context_len=context_len, text_col=text_col, file_col=file_col)
     prev_sentences.fillna('', inplace=True)
     # columns are (normally) ordered to be joined correctly
     sentence_context = prev_sentences.apply(join_sep.join, axis=1)
