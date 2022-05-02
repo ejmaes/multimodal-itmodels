@@ -138,10 +138,10 @@ def pivot_results_df(df:pd.DataFrame, post_patterns:list) -> pd.DataFrame:
     Cannot be done during inference since it changes the number of examples.
     """
     main_columns = [col for col in df.columns if 
-            not any([pat in col for pat in ['xu_h','context','normalised_h','length','tokens_h','sum_h']])]
+            not any([pat in col for pat in ['xu_h','normalised_h','length','tokens_h','sum_h']])]
     pivot_df = []
     for pat in post_patterns:
-        pat_columns = [f'context{pat}',f'normalised_h{pat}', f'length{pat}', f'tokens_h{pat}', 
+        pat_columns = [f'normalised_h{pat}', f'length{pat}', f'tokens_h{pat}', 
                                     f'sum_h{pat}', f'xu_h{pat}']
         tmp = df[ main_columns + pat_columns]
         tmp.rename(columns={col:col.replace(pat,'') for col in pat_columns}, inplace=True)
