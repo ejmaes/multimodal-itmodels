@@ -6,6 +6,8 @@ import torch
 from torch.nn.functional import log_softmax
 from tqdm import tqdm
 
+from entropy_computation import GRUModel
+
 LOG_2 = torch.log(torch.tensor(2.))
 
 
@@ -14,7 +16,7 @@ def sentence_predict(model, tokenizer, text, next_words=20):
     x = torch.LongTensor(tokenizer.encode(text)).unsqueeze(0)
     model.eval()
 
-    for i in range(0, next_words):
+    for _ in range(0, next_words):
         y_pred = model(x)
 
         last_word_logits = y_pred[0][-1]
@@ -40,6 +42,21 @@ def test_predict_entropy(lm, dataloader, tokenizer, device, batch_length, max_se
     sent_length = [len(x) for x in tokens_logp]
     return sent_avg_logp, tokens_logp, sent_length
 
+def batch_predict_logits(lm, batch):
+    if isinstance(lm,GRUModel): # condition on model
+        with torch.no_grad(): # not using GPU memory
+            outputs = lm(batch['input_ids'])  # n_sentences, max_sent_len, vocab_size # as a kwargs - inputs + attention_mask
+        # get proba
+        logp_w = log_softmax(outputs.logits, dim=-1)
+    else:
+        with torch.no_grad(): # not using GPU memory
+            outputs = lm(**batch)  # n_sentences, max_sent_len, vocab_size # as a kwargs - inputs + attention_mask
+        # get proba
+        logp_w = log_softmax(outputs.logits, dim=-1)
+
+    return logp_w
+
+
 
 def batch_predict_entropy(lm, batch, tokenizer, device, batch_length, max_sent_length): # might add logger here
     """ For one batch, get the entropy of expected words 
@@ -48,9 +65,8 @@ def batch_predict_entropy(lm, batch, tokenizer, device, batch_length, max_sent_l
         lm: model
         dataloader
     """
-    inputs, start_idx, df_idx = batch
     for k in ['input_ids','attention_mask']:
-        inputs[k] = inputs[k].to(device) # put data on gpu
+        batch[k] = batch[k].to(device) # put data on gpu
     
     # returns
     batch_avg_logp = []
@@ -58,15 +74,12 @@ def batch_predict_entropy(lm, batch, tokenizer, device, batch_length, max_sent_l
 
     # get predictions
     lm.eval()
-    with torch.no_grad():
-        outputs = lm(**inputs)  # n_sentences, max_sent_len, vocab_size # as a kwargs - inputs + attention_mask
-    # get proba
-    logp_w = log_softmax(outputs.logits, dim=-1)
+    logp_w = batch_predict_logits(lm, batch)
     logp_w /= LOG_2 # TODO: check
 
     # for every sentence
     for s_id in range(batch_length): 
-        sentence = inputs['input_ids'][s_id,:]
+        sentence = batch['input_ids'][s_id,:]
         sentence_logp = []
         # for every token
         for token_index in range(start_idx[s_id], max_sent_length - 1): # -1 bc eos
