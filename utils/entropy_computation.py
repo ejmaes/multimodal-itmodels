@@ -43,16 +43,17 @@ def test_predict_entropy(lm, dataloader, tokenizer, device, batch_length, max_se
     return sent_avg_logp, tokens_logp, sent_length
 
 def batch_predict_logits(lm, batch):
-    if isinstance(lm,GRUModel): # condition on model
-        with torch.no_grad(): # not using GPU memory
-            outputs = lm(batch['input_ids'])  # n_sentences, max_sent_len, vocab_size # as a kwargs - inputs + attention_mask
-        # get proba
-        logp_w = log_softmax(outputs.logits, dim=-1)
-    else:
+    try:#if isinstance(lm,GRUModel): # condition on model
+    #else:
         with torch.no_grad(): # not using GPU memory
             outputs = lm(**batch)  # n_sentences, max_sent_len, vocab_size # as a kwargs - inputs + attention_mask
         # get proba
         logp_w = log_softmax(outputs.logits, dim=-1)
+    except TypeError: # TODO: do it correctly
+        with torch.no_grad(): # not using GPU memory
+            outputs = lm(batch['input_ids'])  # n_sentences, max_sent_len, vocab_size # as a kwargs - inputs + attention_mask
+        # get proba
+        logp_w = log_softmax(outputs, dim=-1)
 
     return logp_w
 
@@ -82,8 +83,8 @@ def batch_predict_entropy(lm, batch, tokenizer, device, batch_length, max_sent_l
         sentence = batch['input_ids'][s_id,:]
         sentence_logp = []
         # for every token
-        for token_index in range(start_idx[s_id], max_sent_length - 1): # -1 bc eos
-            w_id = sentence[s_id]
+        for token_index in range(batch['start_idx'][s_id], max_sent_length - 1): # -1 bc eos
+            w_id = sentence[token_index]
             # skip special tokens (BOS, EOS, PAD) + speaker token # TODO: add speaker tokens
             if w_id in tokenizer.all_special_ids: # and w_id != unk_id:
                 # print('w_id in tokenizer.all_special_ids')
