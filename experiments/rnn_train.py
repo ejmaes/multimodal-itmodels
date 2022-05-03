@@ -93,7 +93,7 @@ def checkpoint_save(model, optimizer, epoch, loss, path):
             'loss': loss,
             }, path) # path must be .pt
 
-def checkpoint_load(path:str, model, optimizer):
+def checkpoint_load(path:str, model, optimizer=None):
     """
     Input:
     -----------
@@ -105,7 +105,8 @@ def checkpoint_load(path:str, model, optimizer):
     """
     checkpoint = torch.load(path)
     model.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    if optimizer is not None:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     epoch = checkpoint['epoch']
     loss = checkpoint['loss']
     return model, optimizer, epoch, loss

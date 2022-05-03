@@ -5,6 +5,7 @@ import numpy as np
 import os,sys,re
 from glob import glob
 import itertools
+import json
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -31,8 +32,8 @@ def parse_arguments():
     parser.add_argument("--aggregate", '-g', action='store_true', help="Whether there is a need to agregate adjacent rows from the same speaker")
     parser.add_argument("--theme_apply", '-t', action='store_true', help="Whether to apply to themes instead of files")
     parser.add_argument("--min_pause", '-p', type=float, default=0.3, help="Minimum duration in seconds between two IPUs, if aggregating; default 0.3s")
-    parser.add_argument("--moves_and_deviation", '-da', action="store_true", help="Additional data for performance analysis")
-    parser.add_argument("--dataframe_col_special", '-dfc', type=dict, default={}, help=f"Dataframe columns - if empty keep default.")
+    parser.add_argument("--moves_and_deviation", '-da', type=str, default=None, help="Additional data for performance analysis")
+    parser.add_argument("--dataframe_col_special", '-dfc', type=json.loads, default={}, help=f"Dataframe columns - if empty keep default.")
     parser.add_argument("--file_model", type=str, default=None, help=f"If several models in the file, which file to keep - model_col must be set in dataframe_col_special")
     parser.add_argument("--fft_on", '-f', type=str, default='xu_h', help=f"Which column (xu_h, normalised_h) to run analysis on.")
 
@@ -189,29 +190,32 @@ if __name__ == '__main__':
 
     # %% [markdown]
     # Load extra data such as pathdev from `'data/moves_and_deviation.csv'` for modeling and plotting
-    if args.moves_and_deviation:
+    if args.moves_and_deviation is not None:
         df_path = pd.read_csv(args.moves_and_deviation)
         psom = pd.merge(left = pso, right = df_path, left_on="file", right_on="Observation")
 
         # %% [markdown]
         # How to add intercepts: https://towardsdatascience.com/simple-and-multiple-linear-regression-in-python-c928425168f9
-        model = sm.OLS(psom['path dev'], psom['PSO']).fit() ## sm.OLS(output, input)
-        model.summary()
-    
-        sns.jointplot(x="PSO", y="path dev", data=psom, kind="reg")
+        try:
+            model = sm.OLS(psom['path dev'], psom['PSO']).fit() ## sm.OLS(output, input)
+            model.summary()
+        
+            sns.jointplot(x="PSO", y="path dev", data=psom, kind="reg")
 
-        # RP
-        df_path_match = df_path.set_index('Observation')['path dev'].to_dict()
-        rp['pathdev'] = rp[file_col].apply(lambda x: np.nan if x not in df_path_match else df_path_match[x])
-        rp[~np.isnan(rp.pathdev)] # OK shape
+            # RP
+            df_path_match = df_path.set_index('Observation')['path dev'].to_dict()
+            rp['pathdev'] = rp[file_col].apply(lambda x: np.nan if x not in df_path_match else df_path_match[x])
+            rp[~np.isnan(rp.pathdev)] # OK shape
 
-        # Compute mean, median and max values for peakPS
-        rp_mean = rp.groupby('file').agg({
-            'pathdev':'mean', 
-            'peakPS': [lambda x: np.mean(np.abs(x)), lambda x: np.median(np.abs(x)), lambda x: np.max(np.abs(x))]
-        }).droplevel(0, axis=1)
-        rp_mean.columns = ['pathdev', 'mean', 'median', 'max']
-        df_to_save["_rp_mean":rp_mean]
-
+            # Compute mean, median and max values for peakPS
+            rp_mean = rp.groupby('file').agg({
+                'pathdev':'mean', 
+                'peakPS': [lambda x: np.mean(np.abs(x)), lambda x: np.median(np.abs(x)), lambda x: np.max(np.abs(x))]
+            }).droplevel(0, axis=1)
+            rp_mean.columns = ['pathdev', 'mean', 'median', 'max']
+            df_to_save["_rp_mean":rp_mean]
+        except:
+            print('Error running pathdev OLS')
+            
     for k,v in df_to_save.items():
         v.to_csv(f'{save_file_pat}{k}.csv', index=False)
