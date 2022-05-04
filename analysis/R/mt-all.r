@@ -7,132 +7,44 @@ library(data.table)
 
 setwd(dirname(getActiveDocumentContext()$path))
 # Load Maptask measurements
-#mt <- read.csv('../../data/hcrc_maptask/microsoft-dialogpt-ds-test.csv')
-#mt <- read.csv('../../data/hcrc_maptask/microsoft-DialoGPT-small_file_1024.csv')
-#mt <- read.csv('../../data/hcrc_maptask/gpt2-en-maptask-finetuned-maptask-ds.csv')
-#mt <- read.csv('/Users/neako/Downloads/gpt2-en-maptask-finetuned_file_1024.csv')
-mt <- read.csv('../../data/hcrc_maptask/maptask-v2.1_srilm-LM_EN_nopretrain.csv')
-#mt <- read.csv('../../data/hcrc_maptask/maptask-v2.1_srilm-LM_EN_pretrain.csv')
+mta <- read.csv('../../data/hcrc_maptask/all_models.csv')
+unique(mta$model)
+mt <- mta[mta$model == "srilm-LM_EN_swb",]
+#  [1] rnn-ft-mp2-                                      rnn_0                                           
+#  [3] rnn_1                                            rnn_2                                           
+#  [9] rnn_7                                            gpt_0                                           
+# [11] gpt_1                                            gpt_2                                           
+# [17] gpt_7                                            gpt_eos_0                                       
+# [19] gpt_eos_1                                        gpt_eos_2                                       
+# [25] gpt_eos_7                                        gpt2-en-maptask-finetuned-context_full_sep_space
+# [27] gpt2-en-maptask-finetuned-context_full_sep_eos   reference                                       
+# [29] srilm-LM_EN_nopretrain                           srilm-LM_EN_pretrain                            
+# [31] srilm-LM_EN_swb                                  srilm-LM_EN_pret_swb                            
+# [33] srilm-LM_EN_wiki1pt                              gpt2-en-fin 
+# to test: srilm-LM_EN_pret_swb, rnn-ft-mp2-, reference, gpt2-en-maptask-finetuned-context_full_sep_space
 
 # Name variables
 mt$logh <- log(mt$xu_h)
 mt$logp <- log(mt$index)
 mt$logt <- log(mt$theme_id)
 mt$corpus <- "maptask"
-mt = mt[mt$sum_logp != 0,]
+#mt = mt[mt$sum_h != 0,] # srilm
 
 # --------------- Position in dialogue ---------------
 m <- lmer(logh ~ 1 + logp + (1 + logp | file), mt)
 summary(m)
-# REML criterion at convergence: 3581.8
-
-# Scaled residuals: 
-    # Min      1Q  Median      3Q     Max 
-# -3.1671 -0.5860  0.0049  0.6334  3.6501 
-
-# Random effects:
- # Groups      Name        Variance  Std.Dev. Corr 
- # dialogue_id (Intercept) 1.308e-02 0.114357      
-             # logp        6.325e-05 0.007953 -1.00
- # Residual                9.028e-02 0.300464      
-# Number of obs: 8002, groups:  dialogue_id, 38
-
-# Fixed effects:
-              # Estimate Std. Error         df t value Pr(>|t|)  
-# (Intercept)  7.584e-04  2.403e-02  4.339e+01   0.032    0.975  
-# logp        -6.965e-03  3.666e-03  1.891e+02  -1.900    0.059 .
-# ---
-# Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
-
-# Correlation of Fixed Effects:
-     # (Intr)
-# logp -0.850
-# optimizer (nloptwrap) convergence code: 0 (OK)
-# boundary (singular) fit: see ?isSingular
-
 
 # --------------- Position in transaction ---------------
 m <- lmer(logh ~ 1 + logt + (1 + logt | file), mt)
 summary(m)
-# REML criterion at convergence: 3591.9
-
-# Scaled residuals: 
-    # Min      1Q  Median      3Q     Max 
-# -3.0897 -0.5836 -0.0033  0.6284  3.6560 
-
-# Random effects:
- # Groups      Name        Variance  Std.Dev. Corr 
- # dialogue_id (Intercept) 6.246e-03 0.079033      
-             # logt        1.134e-05 0.003368 -0.07
- # Residual                9.040e-02 0.300669      
-# Number of obs: 8002, groups:  dialogue_id, 38
-
-# Fixed effects:
-              # Estimate Std. Error         df t value Pr(>|t|)  
-# (Intercept) -0.0295247  0.0149621 35.7615075  -1.973   0.0562 .
-# logt        -0.0003339  0.0036877 24.3411560  -0.091   0.9286  
-# ---
-# Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
-
-# Correlation of Fixed Effects:
-     # (Intr)
-# logt -0.456
-
 
 # --------------- Position in transaction [follower] ---------------
 m <- lmer(logh ~ 1 + logt + (1 + logt|file), mt[mt$speaker == 'f',])
 summary(m)
-# REML criterion at convergence: 1894
-
-# Scaled residuals: 
-    # Min      1Q  Median      3Q     Max 
-# -2.6811 -0.6085 -0.0081  0.6259  3.6811 
-
-# Random effects:
- # Groups      Name        Variance  Std.Dev. Corr 
- # dialogue_id (Intercept) 0.0118278 0.10876       
-             # logt        0.0002234 0.01495  -0.46
- # Residual                0.0985658 0.31395       
-# Number of obs: 3443, groups:  dialogue_id, 38
-
-# Fixed effects:
-             # Estimate Std. Error        df t value Pr(>|t|)  
-# (Intercept) -0.050101   0.023020 30.237543  -2.176   0.0375 *
-# logt        -0.005976   0.007141 21.292784  -0.837   0.4120  
-# ---
-# Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
-
-# Correlation of Fixed Effects:
-     # (Intr)
-# logt -0.673
-
 
 # --------------- Position in transaction [giver] ---------------
 m <- lmer(logh ~ 1 + logt + (1 + logt|file), mt[mt$speaker == 'g',])
 summary(m)
-# REML criterion at convergence: 1563.1
-
-# Scaled residuals: 
-    # Min      1Q  Median      3Q     Max 
-# -3.1908 -0.5835  0.0107  0.6077  3.6835 
-
-# Random effects:
- # Groups      Name        Variance  Std.Dev. Corr
- # dialogue_id (Intercept) 5.444e-03 0.073785     
-             # logt        8.187e-05 0.009048 0.20
- # Residual                8.066e-02 0.284004     
-# Number of obs: 4559, groups:  dialogue_id, 38
-
-# Fixed effects:
-             # Estimate Std. Error        df t value Pr(>|t|)  
-# (Intercept) -0.021988   0.014855 35.441968  -1.480   0.1477  
-# logt         0.009192   0.004588 22.667386   2.004   0.0572 .
-# ---
-# Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
-
-# Correlation of Fixed Effects:
-     # (Intr)
-# logt -0.427
 
 ######################################################################
 #                         XU & REITTER                               #
@@ -211,3 +123,39 @@ p1 = ggplot(mt[(theme_id <= 10),],
 #plot.new()
 plot(p1)
 #dev.off()
+
+# ------------- stationarity tests ----------------
+# A stationary time series is one whose properties do not depend on the time at 
+# which the series is observed. Thus, time series with trends, or with 
+# seasonality, are not stationary — the trend and seasonality will affect the 
+# value of the time series at different times.
+library(fpp)
+library(forecast)
+
+mt = data.table(mt)
+mt.test = mt[, {
+  res1 = Box.test(xu_h)
+  res2 = adf.test(xu_h)
+  res3 = kpss.test(xu_h)
+  res4 = pp.test(xu_h)
+  .(boxpval = res1$p.value, adfpval = res2$p.value, kpsspval = res3$p.value, pppval = res4$p.value)
+}, by = .(file, speaker)]
+
+# how many series passed stationarity tests? - out of 39 files * 2 speakers = 78
+nrow(mt.test[boxpval<.05,]) # 2 (2.5%) instead of 64, 25%
+nrow(mt.test[adfpval<.05,]) # 59 (75.6%) instead of 211, 82.4%
+nrow(mt.test[kpsspval>.05,]) # 70 (89.7%) instead of 245, 95.7%
+nrow(mt.test[pppval<.05,]) # 78 instead of 256, 100%
+
+# mt.new = mt[, {
+#   .(index, xu_h, tsId = .GRP)
+# }, by = .(file, speaker)]
+# m = lmer(xu_h ~ index + (1|tsId), mt.new)
+# summary(m)
+# n.s.
+# The stationarity property seems contradictory to the previous findings about 
+# entropy increase in written text and spoken dialogue
+# It indicates that the stationarity of entropy series does not conflict with the 
+# entropy increasing trend predicted by the principle of ERC (Shannon, 1948). 
+# We conjecture that stationarity satisfies because the effect size (Adj-R2) of 
+# entropy increase is very small.
