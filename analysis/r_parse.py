@@ -4,7 +4,7 @@ from tqdm import tqdm
 import argparse
 
 # %%
-def parse_r_results(lines:list):
+def parse_r_results(lines:list, pat:str):
     res = []
     mode = 'out'
     for line in tqdm(lines):
@@ -13,7 +13,7 @@ def parse_r_results(lines:list):
             mode = "out"
         elif len(line) == 0:
             pass
-        elif r"mt <- mta[mta$model" in line: # also a command so need to be checked before
+        elif f"{pat} <- {pat}a[{pat}a$model" in line: # also a command so need to be checked before
             file = line.split('"')[1] # exactly 3 splits
         elif line[0] == ">" and "summary" not in line:
             command = line
@@ -55,6 +55,7 @@ if __name__ == '__main__':
     parser.add_argument("--output_path", "-o", type=str, default=None, help="Path to output the xlsx file to.")
     parser.add_argument("--full_df", "-f", action="store_true", help="Whether to output a full df and not only the selected columns.")
     parser.add_argument("--no_pivot_df", "-np", action="store_true", help="Whether to output a full df and not only the selected columns.")
+    parser.add_argument("--df_pattern", "-nd", type=str, default="mt", help="Pattern for the name of the df.")
     args = parser.parse_args()
 
     if args.output_path is None:
@@ -64,14 +65,18 @@ if __name__ == '__main__':
     # read file
     with open(args.data_path,'r') as f:
         lines = f.readlines()
-    res = parse_r_results(lines)
+    res = parse_r_results(lines, pat = args.df_pattern)
 
     res['speaker'] = res['speaker'].apply(lambda x: '' if str(x) == 'nan' or len(x) == 0 else x[0])
     
     print("Error lines: \n")
-    print(res[~res['res'].isna()])
+    if 'res' in res.columns:
+        print(res[~res['res'].isna()])
+        df = res[res['res'].isna()]
+    else:
+        print("None.")
+        df = res.copy()
 
-    df = res[res['res'].isna()]
     df['test_label'] = df.apply(lambda x: f"Position in {x['level'].upper()}{d[x.speaker]}", axis=1)
 
     if not args.no_pivot_df:

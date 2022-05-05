@@ -7,15 +7,23 @@ library(data.table)
 
 setwd(dirname(getActiveDocumentContext()$path))
 # Load Dataset measurements
-#pc <- read.csv('../../data/paco-cheese/gpt-finedtuned-paco-cheese-c5.csv')
-#pc <- read.csv('../../data/paco-cheese/gpt2-fr-training_file_1024.csv')
-#pc <- read.csv('../../data/paco-cheese/gpt2-fr-paco-cheese-finetuned-paco-cheese-cs.csv')
-#pc <- read.csv('../../data/paco-cheese/gpt2-fr-paco-cheese-finetuned-paco-cheese-eos-me.csv')
-pc <- read.csv('../../data/paco-cheese/gpt2-fr-paco-cheese-finetuned-context_ 000—bs8.csv')
-#pc <- pc[pc$model == ''] # in case of file containing results for several models
-# Columns: 
-# corpus,file,dyad,index,speaker,start,stop,text,theme,theme_role,theme_index,has_theme,
-# context_5,con+text,normalised_h,length,tokens_h,sum_h,xu_h
+pca <- read.csv('../../data/paco-cheese/all_models.csv')
+unique(pca$model)
+pc <- pca[pca$model == "srilm-LM_FR_orfeocid",]
+# [1] "rnn-ft-pc2-"                             [18] "gpt2-fr-eos-orfeo-cid-paco-cheese-context_full_sep_space"
+# [2] "rnn_0"                                   [19] "gpt2-fr-eos-orfeo-cid-paco-cheese-context_full_sep_eos"  
+# [3] "rnn_1"                                   [20] "gpt_space_0"                                             
+# [4] "rnn_2"                                   [21] "gpt_space_1"                                             
+# [9] "rnn_7"                                   [26] "gpt_space_6"                                             
+# [10] "gpt_eos_0"                               [27] "gpt_space_7"                                             
+# [11] "gpt_eos_1"                               [28] "gpt2-fr-paco-cheese-finetuned-context_full_sep_space"    
+# [12] "gpt_eos_2"                               [29] "gpt2-fr-paco-cheese-finetuned-context_full_sep_eos"      
+# [13] "gpt_eos_3"                               [30] "gpt2-fr-fin"                                             
+# [14] "gpt_eos_4"                               [31] "srilm-LM_FR_pretrain"                                    
+# [15] "gpt_eos_5"                               [32] "srilm-LM_FR_pret_orfeocid"                               
+# [16] "gpt_eos_6"                               [33] "srilm-LM_FR_nopretrain"                                  
+# [17] "gpt_eos_7"                               [34] "srilm-LM_FR_orfeocid" 
+# to test: srilm-LM_FR_orfeocid, gpt2-fr-eos-orfeo-cid-paco-cheese-context_full_sep_eos
 
 # Adapt from Python
 pc$index = pc$index + 1
@@ -24,11 +32,12 @@ pc$theme_index = pc$theme_index + 1
 pc$logh <- log(pc$xu_h)
 pc$logp <- log(pc$index)
 pc$logt <- log(pc$theme_index)
+dim(pc[pc$sum_h == 0,]) 
+pc = pc[pc$sum_h != 0,] # might not be needed for other than srilm
 
 # --------------- Position in dialogue ---------------
 m <- lmer(logh ~ 1 + logp + (1 + logp | file), pc)
 summary(m)
-
 
 # --------------- Position in transaction ---------------
 m <- lmer(logh ~ 1 + logt + (1 + logt | file), pc)
@@ -38,11 +47,9 @@ summary(m)
 m <- lmer(logh ~ 1 + logt + (1 + logt|file), pc[pc$theme_role == 'f',])
 summary(m)
 
-
 # --------------- Position in transaction [giver] ---------------
 m <- lmer(logh ~ 1 + logt + (1 + logt|file), pc[pc$theme_role == 'g',])
 summary(m)
-
 
 
 ######################################################################
@@ -133,3 +140,40 @@ p1 = ggplot(pc[(theme != "") & (theme != 'transition') & (theme_index <= 10),],
   scale_shape_manual(values = c('cheese: g' = 1, 'cheese: f' = 1, 'paco: g' = 4, 'paco: f' = 4))
 #pdf('e_vs_inPos_role_new.pdf', 4, 4)
 plot(p1)
+
+
+# ------------- stationarity tests ----------------
+# A stationary time series is one whose properties do not depend on the time at 
+# which the series is observed. Thus, time series with trends, or with 
+# seasonality, are not stationary — the trend and seasonality will affect the 
+# value of the time series at different times.
+library(fpp)
+library(forecast)
+
+pc = data.table(pc)
+pc.test = pc[, {
+  res1 = Box.test(xu_h)
+  res2 = adf.test(xu_h)
+  res3 = kpss.test(xu_h)
+  res4 = pp.test(xu_h)
+  .(boxpval = res1$p.value, adfpval = res2$p.value, kpsspval = res3$p.value, pppval = res4$p.value)
+}, by = .(file, speaker)]
+
+# how many series passed stationarity tests? - out of 39 files * 2 speakers = 78
+nrow(pc.test[boxpval<.05,]) # 2 (2.5%) instead of 64, 25%
+nrow(pc.test[adfpval<.05,]) # 59 (75.6%) instead of 211, 82.4%
+nrow(pc.test[kpsspval>.05,]) # 70 (89.7%) instead of 245, 95.7%
+nrow(pc.test[pppval<.05,]) # 78 instead of 256, 100%
+
+# pc.new = pc[, {
+#   .(index, xu_h, tsId = .GRP)
+# }, by = .(file, speaker)]
+# m = lmer(xu_h ~ index + (1|tsId), pc.new)
+# summary(m)
+# n.s.
+# The stationarity property seems contradictory to the previous findings about 
+# entropy increase in written text and spoken dialogue
+# It indicates that the stationarity of entropy series does not conflict with the 
+# entropy increasing trend predicted by the principle of ERC (Shannon, 1948). 
+# We conjecture that stationarity satisfies because the effect size (Adj-R2) of 
+# entropy increase is very small.
