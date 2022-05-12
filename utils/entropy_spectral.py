@@ -20,7 +20,7 @@ import argparse
 
 # %%
 # python spectrum R lib
-SPEC_PATH = "/Users/neako/Documents/Cours-MasCo/PhD/tools/githubs/IT/time-series-analysis-master/Python"
+SPEC_PATH = "/Users/eliot/Documents/tools/time-series-analysis-master/Python"
 sys.path.append(SPEC_PATH)
 from spectrum import * # spec_pgram
 
@@ -31,6 +31,8 @@ def parse_arguments():
     parser.add_argument("--data_path", '-d', type=str, required=True, help="The path to the input pandas dataframe.")
     parser.add_argument("--aggregate", '-g', action='store_true', help="Whether there is a need to agregate adjacent rows from the same speaker")
     parser.add_argument("--theme_apply", '-t', action='store_true', help="Whether to apply to themes instead of files")
+    parser.add_argument("--skip_themes", '-st', type=str, nargs='+', help="Themes to not take into account")
+    parser.add_argument("--min_theme_length", '-ml', type=int, default=5, help="Will be removing themes shorter than this")
     parser.add_argument("--min_pause", '-p', type=float, default=0.3, help="Minimum duration in seconds between two IPUs, if aggregating; default 0.3s")
     parser.add_argument("--moves_and_deviation", '-da', type=str, default=None, help="Additional data for performance analysis")
     parser.add_argument("--dataframe_col_special", '-dfc', type=json.loads, default={}, help=f"Dataframe columns - if empty keep default.")
@@ -75,11 +77,16 @@ def aggregate_ipus(dataframe:pd.DataFrame, min_pause_duration:float = 0.3,
 # %% Power Spectrum Overlap
 def compute_pso(df_ent_pso:pd.DataFrame, file_col:str="file", speaker_col:str="speaker", **kwargs):
     pso = []
+    files_dropped = []
     for f in df_ent_pso[file_col].unique(): # was df
         df_ent_sel = df_ent_pso[df_ent_pso[file_col] == f] # was df_ent
         speakers = df_ent_sel[speaker_col].unique()
-        if len(speakers) != 2:
+        if len(speakers) > 2:
             raise IndexSizeErr(f"Should only be two speakers in file {f}")
+        elif len(speakers) < 2:
+            print(f'Skipping {f} - only one speaker for theme')
+            files_dropped.append(f)
+            continue
         elif set(speakers) == set(['f','g']):
             f = 'f'
             g = 'g'
@@ -123,12 +130,13 @@ def compute_pso(df_ent_pso:pd.DataFrame, file_col:str="file", speaker_col:str="s
         pso.append({'file': f, 'PSO': PSO, 'AUVg': AUV_g, 'AUVf': AUV_f, 'AUVmin': AUV_min})
 
     pso = pd.DataFrame(pso)
-    return pso
+    return pso, files_dropped
 
 
 # %% RP
 def compute_rp(dataframe:pd.DataFrame, speaker_col:str="speaker", xu_col:str="xu_h", file_col:str="file", **kwargs):
     df = dataframe.copy(deep=True)
+    files_dropped = []
 
     rp = []
     for f in df[file_col].unique():
@@ -139,17 +147,25 @@ def compute_rp(dataframe:pd.DataFrame, speaker_col:str="speaker", xu_col:str="xu
         spec = spec_pgram(comb_ts, taper=0, plot=False, log='no', detrend=False)
         spec_df = pd.DataFrame(spec['spec'])
 
-        # phase shift at all peaks
-        i_max = np.sign(spec_df.diff()).diff().apply(lambda x: np.where(x < 0)[0], axis=0)
-        i_index = np.array(list(set(np.concatenate((i_max[0],i_max[1]))))) - 1
-        peakPS = spec['phase'].T[0][i_index]
-        rp.append({'file': f, 'peakPS': peakPS})
+        # issues if not enough datapoints => almost no values in spec
+        if spec_df.shape[0] <= 2:
+            print(f'Skipping {f} - not enough freq values')
+            files_dropped.append(f)
+            continue
+        try:
+            # phase shift at all peaks
+            i_max = np.sign(spec_df.diff()).diff().apply(lambda x: np.where(x < 0)[0], axis=0)
+            i_index = np.array(list(set(np.concatenate((i_max[0],i_max[1]))))) - 1
+            peakPS = spec['phase'].T[0][i_index]
+            rp.append({'file': f, 'peakPS': peakPS})
+        except:
+            print(f'skipping {f} for convenience')
 
     rp = pd.DataFrame(rp).explode('peakPS')
-    return rp
+    return rp, files_dropped
 
 
-
+# %% main
 if __name__ == '__main__':
     args = parse_arguments()
     df = pd.read_csv(args.data_path)
@@ -162,9 +178,15 @@ if __name__ == '__main__':
     if args.theme_apply:
         args.dataframe_col_special['speaker_col'] = args.dataframe_col_special['theme_role']
         args.dataframe_col_special['index_col'] = args.dataframe_col_special['theme_index']
-        df = df[(~df[args.dataframe_col_special['theme_col'].isna()]) & (df[args.dataframe_col_special['theme_col'] != " "])]
+        df = df[(~df[args.dataframe_col_special['theme_col']].isna()) & (df[args.dataframe_col_special['theme_col']] != " ")]
         df['filextheme'] = df[args.dataframe_col_special['file_col']] + ' x ' + df[args.dataframe_col_special['theme_col']]
         args.dataframe_col_special['file_col'] = 'filextheme'
+        # remove specific themes and short themes
+        df = df[~df[args.dataframe_col_special['theme_col']].isin(args.skip_themes)]
+        themes_len = df.groupby('filextheme')[args.dataframe_col_special['index_col']].max().to_dict()
+        rm_themes = [k for k,v in themes_len.items() if v < args.min_theme_length]
+        df = df[~df['filextheme'].isin(rm_themes)]
+
     args.dataframe_col_special['xu_h'] = args.fft_on
 
     # Compute PSO
@@ -174,17 +196,34 @@ if __name__ == '__main__':
     speaker_col = args.dataframe_col_special['speaker_col']
     index_col = args.dataframe_col_special['index_col']
     df = df.sort_values([file_col,index_col])
+    list_files = df[args.dataframe_col_special['file_col']].unique()
 
     spgram = partial(spec_pgram, taper=0, plot=False, log='no')
     df_ent = df.groupby([file_col,speaker_col]).agg({xu_col:spgram})
-    df_ent_pso = df_ent[xu_col].apply(pd.Series)[['freq','spec']].explode(['freq','spec']).reset_index(drop=False)
+    df_ent_pso = df_ent[xu_col].apply(pd.Series)[['freq','spec']]
+    # issue in case only 1 value in 'spec'
+    # method 1 - cast - but then issues with interpolation
+    #df_ent_pso['spec'] = df_ent_pso['spec'].apply(lambda x: [x] if isinstance(x,float) else x)
+    # some not affected after the first cast need a second one (???)
+    #df_ent_pso['spec'] = df_ent_pso['spec'].apply(lambda x: [x] if isinstance(x,float) else x) 
+    # method 2 - remove files with lines with only 1 value
+    files_to_drop = list(df_ent_pso[df_ent_pso['spec'].apply(lambda x: str(x)[0] != '[')].index.get_level_values(0))
+    print(f"Dropping files {files_to_drop} - interpolation impossible, only 1 value")
+    df_ent_pso = df_ent_pso[~df_ent_pso.index.get_level_values(0).isin(files_to_drop)]
+    # Obtain df by exploding
+    df_ent_pso = df_ent_pso.explode(['freq','spec']).reset_index(drop=False)
     df_ent_pso.freq = df_ent_pso.freq.astype(float)
     df_ent_pso.spec = df_ent_pso.spec.astype(float)
 
-    pso = compute_pso(df_ent_pso)
+    pso, one_spk_file_drop = compute_pso(df_ent_pso, file_col=file_col, speaker_col=speaker_col)
 
+    df = df[~df[file_col].isin(files_to_drop + one_spk_file_drop)]
     # Compute RP
-    rp = compute_rp(df)
+    rp, rp_dropped = compute_rp(df, file_col=file_col, speaker_col=speaker_col, xu_col=xu_col)
+
+    # Compute number of files dropped
+    files_dropped = files_to_drop + one_spk_file_drop + rp_dropped
+    print(f'Number of files dropped: {len(files_dropped)} / {len(list_files)}')
 
     df_to_save = {"_rp":rp, "_pso":pso, "_fft": df_ent_pso}
 

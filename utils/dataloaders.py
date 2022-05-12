@@ -199,39 +199,51 @@ def create_context_dataset(dataframe: pd.DataFrame, tokenizer, files_train:list=
                               max_length:int=1024, batch_size:int=8,        
                               sep_token:str=' ', sep_context_sent:bool=False, **text_kwargs):
     """All-in-one function: Create context and dataset all at once dataset
+
+    Input:
+    --------
+    sep_token: str, default ' ' (space), can be tokenizer.eos_token
+    sep_context_sent: bool, default False ie no specific separator between context and sentence; if True only one separator between context and last sentence, context is concat
     """
     # Copying df to avoid issues rerunning the function
     df = dataframe.copy(deep=True)
 
     # Parametrize
-    df[f'{text_col}_u'] = _add_to_text(df, text_col=text_col, speaker_col=speaker_col, file_col=file_col, **text_kwargs)
-    join_sep = ' ' if sep_context_sent else sep_token 
-    text_col = f'{text_col}_u' # for further usage
+    join_sep = ' ' if sep_context_sent else sep_token # default token or space (ie no token) if only separating test sentence from context
     # Same but with tokenizes id
-    sep_tok = tokenizer.encode(sep_token) if sep_token != ' ' else []
-    join_st = sep_tok if not sep_context_sent else []
-    rev_join_st = sep_tok if sep_context_sent else [] # ie, if sep_tok has been added to the sentences previously, no need to add it for final concat
+    sep_tok = tokenizer.encode(sep_token) if sep_token != ' ' else [] # tokenized sep_token
+    join_st = sep_tok if not sep_context_sent else [] # tokenized join_sep: default token / no token if only separating test sentence from context
+    rev_join_st = sep_tok if sep_context_sent else [] # token to add between context and test sentence - ie, if sep_tok has been added to globally, no need to add it for final concat
 
-    df['text_input_ids'] = df[text_col].apply(lambda x: join_st + tokenizer(x, truncation=True, padding=False)['input_ids'])
-    df['length'] = df.text_input_ids.apply(len)
+    # Update text with params
+    df[f'{text_col}_u'] = _add_to_text(df, text_col=text_col, speaker_col=speaker_col, file_col=file_col, **text_kwargs) # whether adding speaker tokens
+    text_col = f'{text_col}_u' # for further usage
+    # Create ids with sep & params
+    df['text_input_ids'] = df[text_col].apply(lambda x: join_st + tokenizer(x, truncation=True, padding=False)['input_ids']) # tokenizing and adding sep
+    df['length'] = df.text_input_ids.apply(len) - len(join_st) # length errors with 1rst line since sep_token = tokenizer.eos_token adds 1 in length
 
     #def prepend_ll(x:list, join_pat:list):
     #    """Add this pattern to each list element"""
     #    return [join_pat + y for y in x]
 
     c = df.groupby(file_col).agg({
-        text_col: lambda x: [join_sep.join(list(x)[:i]) for i in range(len(x))], # if using +1 then not adding the last line (concat)
+        text_col: lambda x: [join_sep + join_sep.join(list(x)[:i]) for i in range(len(x))], # if using +1 then not adding the last line (concat)
         'text_input_ids': lambda x: [(list(itertools.chain(*list(x)[:i]))) for i in range(len(x))], # if using +1 then not adding the last line (concat)
         index_col: list
     })
     c = c.explode([text_col, index_col, 'text_input_ids']).reset_index(drop=False)
     df = pd.merge(left=df, left_on=[file_col, index_col], right=c, right_on=[file_col, index_col], how='outer', suffixes=('','_full')) # merging bc index might not be ordered identically bc of groupby
     # full_text is currently only context, adding text and separator:
-    df[f'{text_col}_full'] = (df[f'{text_col}_full']+sep_token+df[text_col])#.apply(lambda x: x.strip().replace('  ',' ')) 
+    df[f'{text_col}_full'] = (df[f'{text_col}_full']+sep_token+df[text_col]).apply(lambda x: x.strip().replace('  ',' ').replace(sep_token+sep_token,sep_token)) 
     df['input_ids'] = df.apply(lambda x: (x['text_input_ids_full']+rev_join_st+x['text_input_ids'])[-max_length:], axis=1) # keep only the correct number of elements
+
+    # Exception made for 1rst line of file if sep_token == ' ': - one token missing
+    if sep_token == ' ':
+        df.loc[df[index_col] == 0, 'input_ids'] = df.loc[df[index_col] == 0].input_ids.apply(lambda x: (tokenizer.encode(tokenizer.eos_token) + x)[-max_length:])
 
     df['start_idx'] = df.apply(lambda x: len(x.input_ids) - x.length, axis = 1)
     df['attention_mask'] = df.input_ids.apply(lambda x: [1]*len(x))
+
     # Dataset 
     if files_train is not None:
         dataset_c = DatasetDict({
