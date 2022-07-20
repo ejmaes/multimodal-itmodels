@@ -4,7 +4,10 @@
         "path": "",
         "language": "ES",
         "column_option": {
-            "text_column": "text",
+            "text_col": "text",
+            "file_col": "file",
+            "index_col": "index",
+            "speaker_col": "speaker",
             "group_columns": ["file"]
         },
         "TrainTest": {
@@ -12,7 +15,8 @@
         }
     },
     "Dataloader": {
-        "context_max_length": 150
+        "context_max_length": 150,
+        "separator": "eos"
     },
     "Trainer": {
         "num_train_epochs": 30,
