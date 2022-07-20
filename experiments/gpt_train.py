@@ -42,8 +42,8 @@ except ModuleNotFoundError:
     import pip
     pip.main(['install', 'transformers'])
     import torch
-    import torch.nn.functional as F
-    import torch.optim as optim
+import torch.nn.functional as F
+import torch.optim as optim
 try:
     from transformers import AutoTokenizer
     #from datasets import load_dataset
@@ -52,9 +52,9 @@ except:
     pip.main(['install', 'transformers'])
     #pip.main(['install', 'datasets'])
     from transformers import AutoTokenizer
-    # Functions for saving during training already exist
-    from transformers import Trainer, TrainingArguments, AutoModelForCausalLM
-    from transformers import TextDataset, DataCollatorForLanguageModeling
+# Functions for saving during training already exist
+from transformers import Trainer, TrainingArguments, AutoModelForCausalLM
+from transformers import TextDataset, DataCollatorForLanguageModeling
 
 
 #### From github
@@ -104,6 +104,7 @@ def parse_arguments():
         training_config = json.load(f)
         args.language = training_config['Dataset']['language']
         args.data = training_config['Dataset']['path']
+        args.corpus = training_config['Dataset']['corpus']
         args.column_option = training_config['Dataset']['column_option']
         args.traintest = None if 'TrainTest' not in training_config['Dataset'].keys() else training_config['Dataset']['TrainTest']
         args.training_kwargs = training_config['Trainer']
@@ -131,6 +132,8 @@ if __name__ == '__main__':
     ###### Training (?) data
     data_collator = DataCollatorForLanguageModeling(tokenizer = tokenizer, mlm=False)
     df = pd.read_csv(args.data, keep_default_na=False, na_values=['']) # na values: 'nan' for french
+    logging.warning(f"Dropping {df.text.isna().sum() + (df.text == '').sum()} rows")
+    df = df[~(df.text.isna()) & (df.text != "")]
     # train/test
     if args.traintest is not None:
         # for now only dealing with _one column_ for the split: len(args.column_option["group_columns"]) == 1
@@ -145,7 +148,7 @@ if __name__ == '__main__':
     logging.info(f'Training files: \n{files_train} \n\n Testing files: \n{files_test}')
 
     sep = {"space": " ", "eos": tokenizer.eos_token}
-    sep = sep["eos"] if "separator" not in args.dataloader_kwargs.keys() else sep[[args.dataloader_kwargs["separator"]]]
+    sep = sep["eos"] if "separator" not in args.dataloader_kwargs.keys() else sep[args.dataloader_kwargs["separator"]]
     max_length = 150 if "context_max_length" not in args.dataloader_kwargs.keys() else args.dataloader_kwargs["context_max_length"]
 
     dataset_c, df2 = create_context_dataset(df, tokenizer, files_train, files_test, sep_token=sep, max_length=max_length, **args.column_option)
