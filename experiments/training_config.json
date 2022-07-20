@@ -1,0 +1,28 @@
+
+{
+    "Dataset": {
+        "path": "",
+        "language": "ES",
+        "column_option": {
+            "text_column": "text",
+            "group_columns": ["file"]
+        },
+        "TrainTest": {
+            "file_column": ["file"]
+        }
+    },
+    "Dataloader": {
+        "context_max_length": 150
+    },
+    "Trainer": {
+        "num_train_epochs": 30,
+        "learning_rate": 2e-6,
+        "warmup_steps": 100,
+        "per_device_train_batch_size": 16,
+        "per_device_eval_batch_size": 16,
+        "eval_steps": 1000, 
+        "prediction_loss_only": false,
+        "eval_accumulation_steps": 5,
+        "save_steps": 5000
+    }
+}
