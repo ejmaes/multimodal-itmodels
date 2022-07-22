@@ -231,7 +231,13 @@ def create_context_dataset(dataframe: pd.DataFrame, tokenizer, files_train:list=
         'text_input_ids': lambda x: [(list(itertools.chain(*list(x)[:i]))) for i in range(len(x))], # if using +1 then not adding the last line (concat)
         index_col: list
     })
-    c = c.explode([text_col, index_col, 'text_input_ids']).reset_index(drop=False)
+    if pd.__version__ >= '1.3.0':
+        c = c.explode([text_col, index_col, 'text_input_ids']).reset_index(drop=False)
+    else: # for earlier version list is not accepted
+        # chaining explodes doesn't work (n**3) >>> taking index i from the list - if issue then data is not correctly indexed
+        c = c.explode(index_col).reset_index(drop=False)
+        c[text_col] = c.apply(lambda x: x[text_col][x[index_col]], axis=1)
+        c['text_input_ids'] = c.apply(lambda x: x['text_input_ids'][x[index_col]], axis=1) 
     df = pd.merge(left=df, left_on=[file_col, index_col], right=c, right_on=[file_col, index_col], how='outer', suffixes=('','_full')) # merging bc index might not be ordered identically bc of groupby
     # full_text is currently only context, adding text and separator:
     df[f'{text_col}_full'] = (df[f'{text_col}_full']+sep_token+df[text_col]).apply(lambda x: x.strip().replace('  ',' ').replace(sep_token+sep_token,sep_token)) 

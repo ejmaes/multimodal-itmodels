@@ -18,11 +18,9 @@
 
 """
 
-from lib2to3.pgen2 import token
 import numpy as np
 import os, sys
 import pandas as pd
-import time
 import json
 from tqdm import tqdm
 from datetime import datetime
@@ -62,9 +60,6 @@ UTILS_PATH = "../utils"
 sys.path.append(UTILS_PATH)
 
 from dataloaders import _add_to_text, create_context, create_full_context, create_context_dataset_from_df, create_context_dataset, get_perplexity_encodings, _anytype_context
-from entropy_computation import sentence_predict, test_predict_entropy, batch_predict_entropy, results_to_df
-from entropy_computation import batch_predict_logits_rnn, batch_predict_logits_lm, compute_perplexity
-from entropy_computation import pivot_results_df
 
 
 
@@ -78,6 +73,7 @@ torch.manual_seed(SEED)
 torch.cuda.manual_seed(SEED)
 np.random.seed(SEED)
 random.seed(SEED)
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 with open("accounts_params.json", "r") as f:
     f = json.load(f)
@@ -174,8 +170,8 @@ if __name__ == '__main__':
         model=model,
         args = training_args,
         data_collator = data_collator,
-        train_dataset = dataset_c['train_dataset'],
-        eval_dataset = dataset_c['test_dataset']
+        train_dataset = dataset_c['train'],
+        eval_dataset = dataset_c['test']
     )
     
     logging.info(f"Training model")
