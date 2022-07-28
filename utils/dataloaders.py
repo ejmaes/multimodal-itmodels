@@ -276,19 +276,19 @@ def get_perplexity_encodings(df:pd.DataFrame, tokenizer,
     encodings = tokenizer("\n\n".join(file_texts[file_texts[file_col].isin(files_test)][text_col].tolist()), return_tensors = "pt")
     return encodings 
 
-def create_data_modeltrain(df:pd.DataFrame, tokenizer, sep:str=' ', max_length:int=128, 
-                           text_col:str='text',file_col:str='file', train_files:list=None, batch_size:int=8, **kwargs):
+def create_data_modeltrain(df:pd.DataFrame, tokenizer, sep_token:str=' ', max_length:int=128, 
+                           text_col:str='text', file_col:str='file', files_train:list=None, batch_size:int=8, **kwargs):
     """Similar to get_perplexity_encoding function, but more general (using train/test etc)
     Kwargs unused but might be used in place of create_context_dataset
     """
     # could be using function for encoding from perplexity
     sent_len = max_length // 2
-    tmp = df.groupby('file').agg({'text': lambda x: sep.join(x).replace('  ', ' ').split(' ')})
-    tmp.text = tmp.text.apply(lambda x: [' '.join(x[i-sent_len:i+sent_len]) for i in range(sent_len,len(x)-sent_len, sent_len)])
-    tmp = tmp.explode('text').reset_index(drop=False)
-    tmp = tmp[tmp['text'].apply(lambda x: isinstance(x,str))]
+    tmp = df.groupby(file_col).agg({text_col: lambda x: sep_token.join(x).replace('  ', ' ').split(' ')})
+    tmp[text_col] = tmp[text_col].apply(lambda x: [' '.join(x[i-sent_len:i+sent_len]) for i in range(sent_len,len(x)-sent_len, sent_len)])
+    tmp = tmp.explode(text_col).reset_index(drop=False)
+    tmp = tmp[tmp[text_col].apply(lambda x: isinstance(x,str))]
 
-    if train_files is None: # taking random sentences
+    if files_train is None: # taking random sentences
         tmp['tt'] = np.random.choice(2,tmp.shape[0],p=[0.7, 0.3])
         dataset_t = DatasetDict({
                     'train': Dataset.from_pandas(tmp[tmp.tt == 0]),
@@ -296,10 +296,10 @@ def create_data_modeltrain(df:pd.DataFrame, tokenizer, sep:str=' ', max_length:i
                 }) 
     else:
         dataset_t = DatasetDict({
-                    'train': Dataset.from_pandas(tmp[tmp[file_col].isin(train_files)]),
-                    'test': Dataset.from_pandas(tmp[~tmp[file_col].isin(train_files)])
+                    'train': Dataset.from_pandas(tmp[tmp[file_col].isin(files_train)]),
+                    'test': Dataset.from_pandas(tmp[~tmp[file_col].isin(files_train)])
                 }) 
 
-    dataset_t = dataset_t.map(lambda x: tokenizer(x['text'], truncation=True, padding='longest', max_length=sent_len), 
+    dataset_t = dataset_t.map(lambda x: tokenizer(x[text_col], truncation=True, padding='longest', max_length=sent_len), 
                               batched=True, batch_size=batch_size)
-    return dataset_t
+    return dataset_t, tmp

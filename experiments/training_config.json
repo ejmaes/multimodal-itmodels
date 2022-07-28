@@ -1,7 +1,7 @@
 
 {
     "Dataset": {
-	"corpus": "corlec",
+	    "corpus": "corlec",
         "path": "../data/corlec/corlec-nopunct-explode.csv",
         "language": "ES",
         "column_option": {
@@ -16,18 +16,22 @@
         }
     },
     "DataLoader": {
-        "context_max_length": 150,
-        "separator": "eos"
+        "max_length": 64,
+        "sep_token": "eos",
+        "loader_form": "collate"
+    },
+    "Model":{
+        "model_name": "DeepESP/gpt2-spanish"
     },
     "Trainer": {
-        "num_train_epochs": 2,
-        "learning_rate": 1e-5,
-        "warmup_steps": 100,
+        "num_train_epochs": 7,
+        "learning_rate": 1e-6,
+        "warmup_steps": 200,
         "per_device_train_batch_size": 16,
         "per_device_eval_batch_size": 16,
-        "eval_steps": 500, 
+        "eval_steps": 2000, 
         "prediction_loss_only": false,
         "eval_accumulation_steps": 5,
-        "save_steps": 500
+        "save_steps": 2000
     }
 }

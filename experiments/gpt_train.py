@@ -16,6 +16,11 @@
     rm -rf multimodal-itmodels
     git clone https://[gkey]@github.com/Neako/multimodal-itmodels.git
 
+Parameters for the training_config file:
+    Model > model_name, tokenizer: paths from HuggingFace - TODO: parameter to create tokenizer from scratch
+    Dataset > corpus, path, language; TrainTest > train_groups, test_groups if defined, otherwise column to split on
+    Trainer: parameters from HuggingFace doc, to add to the Trainer (nb epochs, batch size...)
+    DataLoader > context_max_length, separator (when collating sentences), loader_form (whether to use the same loader as in prediction - sentence by sentence: 'sent' - or collated - 'collate')
 """
 
 import numpy as np
@@ -59,7 +64,8 @@ from transformers import TextDataset, DataCollatorForLanguageModeling
 UTILS_PATH = "../utils"
 sys.path.append(UTILS_PATH)
 
-from dataloaders import _add_to_text, create_context, create_full_context, create_context_dataset_from_df, create_context_dataset, get_perplexity_encodings, _anytype_context
+from dataloaders import _add_to_text, create_context, create_full_context, create_context_dataset_from_df, create_context_dataset, get_perplexity_encodings, create_data_modeltrain, _anytype_context
+from entropy_computation import batch_predict_logits_rnn, batch_predict_logits_lm, compute_perplexity
 
 
 
@@ -82,29 +88,32 @@ HUB_PARAMS = f['huggingface'] # keys: user, token
 #%% ------ Arguments
 def parse_arguments():
     parser = argparse.ArgumentParser()
-    # Model
-    parser.add_argument("--model", type=str, required=True, help="Which model to load from HuggingFace.")
-    # Tokenizer
-    parser.add_argument("--tokenizer", "-t", type=str, default=None, help="Name of the tokenizer to load from HuggingFace, if different from model name.") 
-    # TODO: add mode to train tokenizer from BPE
-    parser.add_argument("--tok_maxlength", "-tml", type=int, default=1024, help="Max length (padding) for tokenizer to create examples.") 
-    # Model / Data Parameters
     parser.add_argument("--conf_file", type=str, required=True, help="Path to the file containing training arguments & data info")
-    parser.add_argument("--dataloader", "-d", type=str, default="gpt2", choices=["auto","custom"], help="Whether to use a custom DataLoader or the existing one for training.") 
     
     args = parser.parse_args()
-    if args.tokenizer is None:
-        args.tokenizer = args.model
-
+    assert os.path.exists(args.conf_file)
     with open(args.conf_file, "r") as f:
         training_config = json.load(f)
-        args.language = training_config['Dataset']['language']
-        args.data = training_config['Dataset']['path']
-        args.corpus = training_config['Dataset']['corpus']
-        args.column_option = training_config['Dataset']['column_option']
-        args.traintest = None if 'TrainTest' not in training_config['Dataset'].keys() else training_config['Dataset']['TrainTest']
-        args.training_kwargs = training_config['Trainer']
-        args.dataloader_kwargs = training_config["DataLoader"]
+
+    # Model
+    args.model = training_config['Model']['model_name']
+    args.tokenizer = args.model if training_config['Model'].get('tokenizer', None) is None else training_config['Model']['tokenizer']
+    # TODO: add mode to train tokenizer from BPE
+    args.tok_maxlength = 1024 if training_config['Model'].get('tok_maxlength', None) is None else training_config['Model']['tok_maxlength']
+
+    # Data
+    args.language = training_config['Dataset']['language']
+    args.data = training_config['Dataset']['path']
+    args.corpus = training_config['Dataset']['corpus']
+    args.column_option = training_config['Dataset']['column_option']
+    args.traintest = None if 'TrainTest' not in training_config['Dataset'].keys() else training_config['Dataset']['TrainTest']
+    # Trainer / DataLoader
+    args.training_kwargs = training_config['Trainer']
+    args.dataloader = 'sent' if training_config["DataLoader"].get('loader_form', None) is None else training_config["DataLoader"].pop('loader_form')
+    args.dataloader_kwargs = training_config.get("DataLoader", {"sep_token": "eos"})
+
+    # Perplexity
+    args.perplexity_kwargs = training_config.get("Perplexity", {"stride":16, "max_length":1024})
 
     return args
 
@@ -114,8 +123,7 @@ if __name__ == '__main__':
     # default arguments
     # args = SimpleNamespace(model_type="gru", data_path="data/corlec", batch_size=8, nb_epochs=10, tokenizer="gpt2")
     start = datetime.now()
-    MODEL_NAME = f"{args.language}_{args.corpus}"
-    output_dir = os.path.join(SAVE_PATH, f"{MODEL_NAME}_{start.strftime('%Y%m%d-%H:%M:%S')}")
+    MODEL_NAME = f"{args.language}_{args.corpus}_{args.model.replace('/','-')}"
 
     ###### Tokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
@@ -143,11 +151,22 @@ if __name__ == '__main__':
             files_train, files_test = train_test_split(files, random_state=SEED, test_size=0.3)
     logging.info(f'Training files: \n{files_train} \n\n Testing files: \n{files_test}')
 
-    sep = {"space": " ", "eos": tokenizer.eos_token}
-    sep = sep["eos"] if "separator" not in args.dataloader_kwargs.keys() else sep[args.dataloader_kwargs["separator"]]
-    max_length = 150 if "context_max_length" not in args.dataloader_kwargs.keys() else args.dataloader_kwargs["context_max_length"]
+    # Cannot be done before defining tokenizer
+    sep_adapt = {"space": " ", "eos": tokenizer.eos_token}
+    sep = args.dataloader_kwargs["sep_token"]
+    args.dataloader_kwargs["sep_token"] = sep if sep not in sep_adapt.keys() else sep_adapt[sep]
+    args.dataloader_kwargs["max_length"] = 150 if "max_length" not in args.dataloader_kwargs.keys() else args.dataloader_kwargs["max_length"]
 
-    dataset_c, df2 = create_context_dataset(df, tokenizer, files_train, files_test, sep_token=sep, max_length=max_length, **args.column_option)
+    if args.dataloader == 'sent':
+        dl_function = create_context_dataset
+    elif args.dataloader == 'collate':
+        dl_function = create_data_modeltrain
+    else:
+        raise ValueError('Undefined method for loading data')
+    dataset_c, df2 = dl_function(df, tokenizer, files_train=files_train, files_test=files_test, 
+                                **args.dataloader_kwargs, **args.column_option)
+
+    print(df2.head())
 
     ###### Model and Training
     model = AutoModelForCausalLM.from_pretrained(args.model).to(DEVICE)
@@ -180,3 +199,9 @@ if __name__ == '__main__':
     # lm = AutoModelForCausalLM.from_pretrained(output_dir, local_files_only=True) # loading model
     trainer.push_to_hub(MODEL_NAME) 
     logging.info(f"Model saved to Hub! Total time elapsed: {datetime.now() - start}")
+
+    # Perplexity:
+    for sep in [' ', tokenizer.eos_token]:
+        encodings = get_perplexity_encodings(df, tokenizer, sep_token = sep, files_test=files_test)
+        ppl = compute_perplexity(rnnmodel, encodings, DEVICE, model_is_lm=True, **args.perplexity_kwargs)
+        logging.info(f"Model perplexity on the test dataset with separator `{sep}`: {ppl}")
