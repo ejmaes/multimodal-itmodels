@@ -18,7 +18,7 @@
     "DataLoader": {
         "max_length": 64,
         "sep_token": "eos",
-        "loader_form": "collate"
+        "loader_form": "sent"
     },
     "Model":{
         "model_name": "DeepESP/gpt2-spanish"

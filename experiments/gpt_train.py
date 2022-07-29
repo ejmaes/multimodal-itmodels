@@ -166,8 +166,6 @@ if __name__ == '__main__':
     dataset_c, df2 = dl_function(df, tokenizer, files_train=files_train, files_test=files_test, 
                                 **args.dataloader_kwargs, **args.column_option)
 
-    print(df2.head())
-
     ###### Model and Training
     model = AutoModelForCausalLM.from_pretrained(args.model).to(DEVICE)
     # initialise the TrainingArguments
@@ -203,5 +201,5 @@ if __name__ == '__main__':
     # Perplexity:
     for sep in [' ', tokenizer.eos_token]:
         encodings = get_perplexity_encodings(df, tokenizer, sep_token = sep, files_test=files_test)
-        ppl = compute_perplexity(rnnmodel, encodings, DEVICE, model_is_lm=True, **args.perplexity_kwargs)
+        ppl = compute_perplexity(model, encodings, DEVICE, model_is_lm=True, **args.perplexity_kwargs)
         logging.info(f"Model perplexity on the test dataset with separator `{sep}`: {ppl}")
