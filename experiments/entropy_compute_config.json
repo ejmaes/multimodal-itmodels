@@ -1,0 +1,24 @@
+{
+    "Dataset": {
+	    "corpus": "epsn",
+        "path": "../data/epsn/epsn_corrected.csv",
+        "language": "ES",
+        "column_option": {
+            "text_col": "text",
+            "file_col": "file",
+            "index_col": "index",
+            "speaker_col": "speaker",
+            "group_columns": ["file"]
+        }
+    },
+    "DataLoader": {
+        "sep_token": "eos",
+        "max_length": 1024
+    },
+    "Model":{
+        "model_name": "ES_corlec_DeepESP-gpt2-spanish",
+        "tokenizer": "DeepESP/gpt2-spanish",
+        "local_files_only": false
+    },
+    "Computation": []
+}
